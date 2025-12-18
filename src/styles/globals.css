@@ -4,6 +4,8 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  --font-sans: 'Public Sans', sans-serif;
+
   /* Core Light Mode - Clean & Professional */
   --background: oklch(0.98 0 0); /* Soft white */
   --foreground: oklch(0.25 0.02 260); /* Deep charcoal/blue */
@@ -117,6 +119,6 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans text-sm leading-6;
   }
 }

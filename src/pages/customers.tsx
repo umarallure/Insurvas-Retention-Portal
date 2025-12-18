@@ -1,15 +1,18 @@
 import * as React from "react";
-import { CustomersTable } from "@/components/customers/customers-table";
 import { Button } from "@/components/ui/button";
-import { useRealtimeMondayDeals } from "@/hooks/use-realtime-monday-deals";
 import { RefreshCcw } from "lucide-react";
+import { GroupedDealsView } from "@/components/customers/grouped-deals-view";
 
 export default function CustomersPage() {
   const [mounted, setMounted] = React.useState(false);
-  const [page, setPage] = React.useState(1);
-  const pageSize = 25;
+  const [refreshToken, setRefreshToken] = React.useState(0);
+  const [loading, setLoading] = React.useState(false);
 
-  const { data, loading, refresh, hasMore } = useRealtimeMondayDeals(page, pageSize);
+  const refresh = React.useCallback(() => {
+    setLoading(true);
+    setRefreshToken((t) => t + 1);
+    setTimeout(() => setLoading(false), 300);
+  }, []);
 
   React.useEffect(() => {
     setMounted(true);
@@ -35,32 +38,8 @@ export default function CustomersPage() {
         </Button>
       </div>
 
-      <div className="mx-auto space-y-4">
-        {mounted ? <CustomersTable data={data} loading={loading} /> : null}
-
-        <div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
-          <div>
-            Page <span className="font-medium">{page}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={loading || page === 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={loading || !hasMore}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
+      <div className="mx-auto">
+        {mounted ? <GroupedDealsView key={refreshToken} /> : null}
       </div>
     </div>
   );
