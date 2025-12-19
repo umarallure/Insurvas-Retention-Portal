@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/router";
 
 import type { MondayComDeal } from "@/types";
 import { supabase } from "@/lib/supabase";
@@ -55,6 +56,7 @@ export function GroupedDealsGroup({
   search: string;
   pageSize: number;
 }) {
+  const router = useRouter();
   const [expanded, setExpanded] = React.useState(false);
   const [page, setPage] = React.useState(1);
   const [loading, setLoading] = React.useState(false);
@@ -148,14 +150,29 @@ export function GroupedDealsGroup({
         ) : (
           <>
             {rows.map((deal) => {
-              const id = deal.monday_item_id ?? String(deal.id);
+              const href = `/customers/lead-detail?${encodeURIComponent(String(deal.id))}`;
               return (
                 <TableRow
                   key={deal.id}
-                  className="group transition-colors hover:bg-muted/20 border-l-4 border-transparent hover:border-muted-foreground/20"
+                  className="group transition-colors hover:bg-muted/20 border-l-4 border-transparent hover:border-muted-foreground/20 cursor-pointer"
+                  role="link"
+                  tabIndex={0}
+                  onClick={() => {
+                    void router.push(href);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      void router.push(href);
+                    }
+                  }}
                 >
                   <TableCell className="py-4 px-6 text-sm w-[140px]">
-                    <Link href={`/customers/${id}`} className="font-semibold hover:underline">
+                    <Link
+                      href={href}
+                      onClick={(e) => e.stopPropagation()}
+                      className="font-semibold hover:underline"
+                    >
                       {deal.policy_number ?? "—"}
                     </Link>
                   </TableCell>
