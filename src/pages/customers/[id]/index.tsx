@@ -22,11 +22,14 @@ export default function CustomerDetailPage() {
       setLoading(true);
       try {
         // First try by monday_item_id
-        let { data, error } = await supabase
+        const first = await supabase
           .from("monday_com_deals")
           .select("*")
           .eq("monday_item_id", id)
           .maybeSingle();
+
+        let data = first.data as MondayComDeal | null;
+        const error = first.error;
 
         if (error && error.code !== "PGRST116") {
           throw error;

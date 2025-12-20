@@ -47,9 +47,11 @@ export function CommandPalette() {
             <CommandEmpty>No results found.</CommandEmpty>
 
             <CommandGroup heading="Go to">
-              <CommandItem onSelect={() => openAndNavigate("/")}>Home</CommandItem>
+              <CommandItem onSelect={() => openAndNavigate("/")}>Dashboard</CommandItem>
               <CommandItem onSelect={() => openAndNavigate("/inbox")}>Inbox</CommandItem>
               <CommandItem onSelect={() => openAndNavigate("/customers")}>Customers</CommandItem>
+              <CommandItem onSelect={() => openAndNavigate("/agent/assigned-leads")}>Agent</CommandItem>
+              <CommandItem onSelect={() => openAndNavigate("/manager/retention-daily-deal-flow")}>Manager</CommandItem>
               <CommandItem onSelect={() => openAndNavigate("/settings")}>Settings</CommandItem>
             </CommandGroup>
 

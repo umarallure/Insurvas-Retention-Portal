@@ -46,11 +46,6 @@ export function SettingsShell({
               </NavigationMenuLink>
             </NavigationMenuItem>
             <NavigationMenuItem>
-              <NavigationMenuLink asChild className={navItemClass(isActive("/settings/members"))}>
-                <Link href="/settings/members">Members</Link>
-              </NavigationMenuLink>
-            </NavigationMenuItem>
-            <NavigationMenuItem>
               <NavigationMenuLink
                 asChild
                 className={navItemClass(isActive("/settings/notifications"))}
