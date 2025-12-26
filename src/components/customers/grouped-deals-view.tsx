@@ -86,7 +86,7 @@ export function GroupedDealsView() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-card p-4 rounded-xl border shadow-sm">
-        <div className="relative w-full max-w-md">
+        <div className="relative w-full max-w-2xl">
           <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
           <Input
             placeholder="Search by Policy Number, Phone, or Deal Name..."
@@ -121,23 +121,26 @@ export function GroupedDealsView() {
               <TableHead className="text-xs font-bold uppercase tracking-wider text-muted-foreground py-4 px-6 w-[140px]">
                 Policy Number
               </TableHead>
-              <TableHead className="text-xs font-bold uppercase tracking-wider text-muted-foreground py-4 px-6 w-[120px]">
+              <TableHead className="text-xs font-bold uppercase tracking-wider text-muted-foreground py-4 px-6 w-[100px]">
                 Carrier
               </TableHead>
-              <TableHead className="text-xs font-bold uppercase tracking-wider text-muted-foreground py-4 px-6 w-[200px]">
+              <TableHead className="text-xs font-bold uppercase tracking-wider text-muted-foreground py-4 px-6 w-[160px]">
                 Policy Status
               </TableHead>
-              <TableHead className="text-xs font-bold uppercase tracking-wider text-muted-foreground py-4 px-6 w-[220px]">
+              <TableHead className="text-xs font-bold uppercase tracking-wider text-muted-foreground py-4 px-6 w-[180px]">
                 GHL Name
               </TableHead>
-              <TableHead className="text-xs font-bold uppercase tracking-wider text-muted-foreground py-4 px-6 w-[140px]">
+              <TableHead className="text-xs font-bold uppercase tracking-wider text-muted-foreground py-4 px-6 w-[110px]">
                 Phone No
               </TableHead>
-              <TableHead className="text-xs font-bold uppercase tracking-wider text-muted-foreground py-4 px-6 w-[140px]">
+              <TableHead className="text-xs font-bold uppercase tracking-wider text-muted-foreground py-4 px-6 w-[130px]">
                 Center
               </TableHead>
-              <TableHead className="text-xs font-bold uppercase tracking-wider text-muted-foreground py-4 px-6 w-[120px]">
+              <TableHead className="text-xs font-bold uppercase tracking-wider text-muted-foreground py-4 px-6 w-[130px]">
                 Creation Date
+              </TableHead>
+              <TableHead className="text-xs font-bold uppercase tracking-wider text-muted-foreground py-4 px-6 w-[170px] text-right">
+                Actions
               </TableHead>
             </TableRow>
           </TableHeader>

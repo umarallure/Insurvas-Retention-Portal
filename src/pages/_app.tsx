@@ -1,9 +1,9 @@
 import "@/styles/globals.css";
+import "react-toastify/dist/ReactToastify.css";
 import type { AppProps } from "next/app";
 import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 import { Public_Sans } from "next/font/google";
-
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { DashboardShell } from "@/components/dashboard-shell";
@@ -11,11 +11,35 @@ import { DashboardProvider } from "@/components/dashboard-context";
 import { CommandPalette } from "@/components/command-palette";
 import { NotificationsSlideover } from "@/components/notifications-slideover";
 import { supabase } from "@/lib/supabase";
+import { ToastContainer } from "react-toastify";
+import { useTheme } from "next-themes";
 
 const publicSans = Public_Sans({
   subsets: ["latin"],
   variable: "--font-sans",
 });
+
+function ThemedToastContainer() {
+  const { theme, systemTheme } = useTheme();
+  const resolvedTheme = theme === "system" ? systemTheme : theme;
+
+  // Use a darker toast style in dark mode, and colored toasts in light mode.
+  const toastTheme = resolvedTheme === "dark" ? "dark" : "colored";
+
+  return (
+    <ToastContainer
+      position="top-right"
+      autoClose={4000}
+      newestOnTop
+      closeOnClick
+      pauseOnHover
+      draggable
+      theme={toastTheme}
+      progressClassName="!bg-emerald-500"
+      aria-label="Notification messages"
+    />
+  );
+}
 export default function App({ Component, pageProps }: AppProps) {
   const router = useRouter();
   const [authChecked, setAuthChecked] = useState(false);
@@ -71,6 +95,7 @@ export default function App({ Component, pageProps }: AppProps) {
           <CommandPalette />
           <NotificationsSlideover />
           <Toaster />
+          <ThemedToastContainer />
         </DashboardProvider>
       </main>
     </ThemeProvider>

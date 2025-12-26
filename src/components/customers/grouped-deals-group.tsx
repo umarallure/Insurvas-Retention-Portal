@@ -10,7 +10,8 @@ import { supabase } from "@/lib/supabase";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TableCell, TableRow } from "@/components/ui/table";
-import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, PhoneForwardedIcon, EyeIcon, ShieldIcon } from "lucide-react";
+import { ClaimCallModal } from "./claim-call-modal";
 
 export type DealGroup = {
   id: string;
@@ -29,6 +30,7 @@ type DealRow = Pick<
   | "phone_number"
   | "call_center"
   | "deal_creation_date"
+  | "deal_name"
 >;
 
 function statusBadge(status: string | null) {
@@ -63,6 +65,8 @@ export function GroupedDealsGroup({
   const [rows, setRows] = React.useState<DealRow[]>([]);
   const [hasMore, setHasMore] = React.useState(false);
   const [count, setCount] = React.useState<number | null>(null);
+  const [claimModalOpen, setClaimModalOpen] = React.useState(false);
+  const [selectedLead, setSelectedLead] = React.useState<DealRow | null>(null);
 
   React.useEffect(() => {
     setPage(1);
@@ -77,7 +81,7 @@ export function GroupedDealsGroup({
       let q = supabase
         .from("monday_com_deals")
         .select(
-          "id,monday_item_id,policy_number,carrier,policy_status,ghl_name,phone_number,call_center,deal_creation_date",
+          "id,monday_item_id,policy_number,carrier,policy_status,ghl_name,phone_number,call_center,deal_creation_date,deal_name",
           { count: "exact" }
         )
         .eq("group_title", group.title)
@@ -122,7 +126,7 @@ export function GroupedDealsGroup({
         style={{ borderLeftColor: group.color }}
         onClick={() => setExpanded((v) => !v)}
       >
-        <TableCell colSpan={7} className="py-3 px-6 bg-muted/10">
+        <TableCell colSpan={8} className="py-3 px-6 bg-muted/10">
           <div className="flex items-center gap-2">
             {expanded ? (
               <ChevronDownIcon className="size-4 text-muted-foreground" />
@@ -143,7 +147,7 @@ export function GroupedDealsGroup({
       {expanded ? (
         rows.length === 0 ? (
           <TableRow className="border-l-4 border-transparent">
-            <TableCell colSpan={7} className="py-4 px-6 text-sm text-muted-foreground">
+            <TableCell colSpan={8} className="py-4 px-6 text-sm text-muted-foreground">
               No records.
             </TableCell>
           </TableRow>
@@ -176,32 +180,72 @@ export function GroupedDealsGroup({
                       {deal.policy_number ?? "—"}
                     </Link>
                   </TableCell>
-                  <TableCell className="py-4 px-6 text-sm w-[120px]">
-                    <span className="text-muted-foreground truncate block max-w-[120px]">{deal.carrier ?? "—"}</span>
+                  <TableCell className="py-4 px-6 text-sm w-[110px]">
+                    <span className="text-muted-foreground truncate block max-w-[110px]">{deal.carrier ?? "—"}</span>
                   </TableCell>
-                  <TableCell className="py-4 px-6 text-sm w-[200px] overflow-hidden">
+                  <TableCell className="py-4 px-6 text-sm w-[160px] overflow-hidden">
                     {statusBadge(deal.policy_status)}
                   </TableCell>
-                  <TableCell className="py-4 px-6 text-sm w-[220px]">
-                    <div className="truncate max-w-[220px] font-medium">{deal.ghl_name ?? "—"}</div>
+                  <TableCell className="py-4 px-6 text-sm w-[180px]">
+                    <div className="truncate max-w-[180px] font-medium">{deal.ghl_name ?? "—"}</div>
                   </TableCell>
-                  <TableCell className="py-4 px-6 text-sm w-[140px]">
+                  <TableCell className="py-4 px-6 text-sm w-[110px]">
                     <span className="tabular-nums">{deal.phone_number ?? "—"}</span>
                   </TableCell>
-                  <TableCell className="py-4 px-6 text-sm w-[140px]">
+                  <TableCell className="py-4 px-6 text-sm w-[130px]">
                     <Badge variant="secondary" className="bg-secondary/50">
                       {deal.call_center ?? "—"}
                     </Badge>
                   </TableCell>
-                  <TableCell className="py-4 px-6 text-sm w-[120px]">
+                  <TableCell className="py-5 px-6 text-sm w-[130px]">
                     {deal.deal_creation_date ? new Date(deal.deal_creation_date).toLocaleDateString() : "—"}
+                  </TableCell>
+                  <TableCell className="py-5 px-6 text-sm w-[170px] align-top">
+                    <div className="flex flex-col items-end justify-center gap-2">
+                      <Button
+                        size="sm"
+                        className="gap-1"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedLead(deal);
+                          setClaimModalOpen(true);
+                        }}
+                      >
+                        <PhoneForwardedIcon className="size-4" />
+                        Claim Call
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void router.push(href);
+                        }}
+                      >
+                        <EyeIcon className="size-4" />
+                        View
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="gap-1"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void router.push(`/retention-flow?id=${encodeURIComponent(String(deal.id))}`);
+                        }}
+                      >
+                        <ShieldIcon className="size-4" />
+                        Claim Retention
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               );
             })}
 
             <TableRow className="border-none bg-transparent">
-              <TableCell colSpan={7} className="py-3 px-6">
+              <TableCell colSpan={8} className="py-3 px-6">
                 <div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
                   <div>
                     Page <span className="font-medium">{page}</span>
@@ -230,6 +274,28 @@ export function GroupedDealsGroup({
           </>
         )
       ) : null}
+      <ClaimCallModal
+        open={claimModalOpen}
+        onOpenChange={setClaimModalOpen}
+        leadName={selectedLead?.ghl_name ?? selectedLead?.deal_name ?? undefined}
+        leadId={
+          selectedLead?.policy_number ??
+          (selectedLead?.monday_item_id ? String(selectedLead.monday_item_id) : undefined) ??
+          (selectedLead?.id ? String(selectedLead.id) : undefined)
+        }
+        onClaim={(leadId) => {
+          const targetId =
+            leadId ??
+            (selectedLead?.policy_number ??
+              (selectedLead?.monday_item_id ? String(selectedLead.monday_item_id) : undefined) ??
+              (selectedLead?.id ? String(selectedLead.id) : undefined));
+          if (targetId) {
+            void router.push(`/agent/call-update?leadId=${encodeURIComponent(targetId)}`);
+          } else {
+            void router.push("/agent/call-update");
+          }
+        }}
+      />
     </>
   );
 }

@@ -146,23 +146,6 @@ export function AppSidebar() {
                     </Link>
                   </SidebarMenuSubButton>
                 </SidebarMenuSubItem>
-                <SidebarMenuSubItem>
-                  <SidebarMenuSubButton
-                    asChild
-                    isActive={isActive("/agent/assigned-lead-details")}
-                  >
-                    <Link href="/agent/assigned-lead-details">
-                      <span>Lead Details</span>
-                    </Link>
-                  </SidebarMenuSubButton>
-                </SidebarMenuSubItem>
-                <SidebarMenuSubItem>
-                  <SidebarMenuSubButton asChild isActive={isActive("/agent/call-update")}>
-                    <Link href="/agent/call-update">
-                      <span>Call Update</span>
-                    </Link>
-                  </SidebarMenuSubButton>
-                </SidebarMenuSubItem>
               </SidebarMenuSub>
             ) : null}
           </SidebarMenuItem>
@@ -196,6 +179,13 @@ export function AppSidebar() {
                   >
                     <Link href="/manager/retention-daily-deal-flow">
                       <span>Retention Deal Flow</span>
+                    </Link>
+                  </SidebarMenuSubButton>
+                </SidebarMenuSubItem>
+                <SidebarMenuSubItem>
+                  <SidebarMenuSubButton asChild isActive={isActive("/manager/assign-lead")}>
+                    <Link href="/manager/assign-lead">
+                      <span>Assign Leads</span>
                     </Link>
                   </SidebarMenuSubButton>
                 </SidebarMenuSubItem>

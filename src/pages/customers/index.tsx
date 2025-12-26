@@ -38,7 +38,7 @@ export default function CustomersPage() {
         </Button>
       </div>
 
-      <div className="mx-auto">
+      <div className="max-w-6xl mx-auto">
         {mounted ? <GroupedDealsView key={refreshToken} /> : null}
       </div>
     </div>
