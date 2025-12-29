@@ -1,3 +1,5 @@
+"use client"
+
 import React from "react";
 
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -9,14 +11,19 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { Loader2, Plus } from "lucide-react";
 
-import { DEAL_GROUPS } from "./deal-groups";
+
+import { getGhlStages, type GhlStageOption } from "../../../lib/retention-assignment.logic";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import {
   BulkAssignAllocationRow,
   type BulkAssignAgentOption,
   type BulkAssignAllocationRowValue,
 } from "./bulk-assign-allocation-row";
+import { computeEvenAllocationCounts } from "./bulk-assign-utils";
 import {
   buildLeadIdPlan,
+  buildDealIdPlan,
   computeAllocationCounts,
   isValidPercentTotal,
   normalizeAllocations,
@@ -31,6 +38,7 @@ type BulkAssignModalProps = {
 };
 
 type DealRow = {
+  id: number;
   monday_item_id: string | null;
 };
 
@@ -79,18 +87,29 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
   }, [toast]);
 
   const [groupTitle, setGroupTitle] = React.useState<string>("");
-  const [search, setSearch] = React.useState<string>("");
+
+  const [stages, setStages] = React.useState<GhlStageOption[]>([]);
+  const [loadingStages, setLoadingStages] = React.useState(false);
+
+  // multi-select stages support
+  const [selectedStages, setSelectedStages] = React.useState<string[]>([]);
 
   const [loadingGroup, setLoadingGroup] = React.useState(false);
   const [groupCount, setGroupCount] = React.useState<number | null>(null);
   const [assignedCount, setAssignedCount] = React.useState<number>(0);
-  const [unassignedLeadIds, setUnassignedLeadIds] = React.useState<string[]>([]);
+  const [unassignedDealIds, setUnassignedDealIds] = React.useState<number[]>([]);
+
+  const [evenDistribution, setEvenDistribution] = React.useState<boolean>(false);
 
   const [allocations, setAllocations] = React.useState<BulkAssignAllocationRowValue[]>([
     { agentId: "", percent: 100 },
   ]);
 
+  const prevAllocRef = React.useRef<BulkAssignAllocationRowValue[] | null>(null);
+
   const [saving, setSaving] = React.useState(false);
+  const [assigning, setAssigning] = React.useState(false);
+  const [assignProgress, setAssignProgress] = React.useState<{ total: number; done: number }>({ total: 0, done: 0 });
 
   const cleanedAllocations = React.useMemo<AllocationInput[]>(
     () => normalizeAllocations(allocations),
@@ -108,12 +127,13 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
   }, [cleanedAllocations]);
 
   const computedCounts = React.useMemo(() => {
-    return computeAllocationCounts(unassignedLeadIds.length, cleanedAllocations);
-  }, [unassignedLeadIds.length, cleanedAllocations]);
+    if (evenDistribution) return computeEvenAllocationCounts(unassignedDealIds.length, cleanedAllocations);
+    return computeAllocationCounts(unassignedDealIds.length, cleanedAllocations);
+  }, [unassignedDealIds.length, cleanedAllocations, evenDistribution]);
 
   const canAssign =
-    !!groupTitle &&
-    unassignedLeadIds.length > 0 &&
+    selectedStages.length > 0 &&
+    unassignedDealIds.length > 0 &&
     cleanedAllocations.length > 0 &&
     isValidPercentTotal(cleanedAllocations) &&
     !hasDuplicateAgents &&
@@ -121,10 +141,9 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
 
   const reset = React.useCallback(() => {
     setGroupTitle("");
-    setSearch("");
     setGroupCount(null);
     setAssignedCount(0);
-    setUnassignedLeadIds([]);
+    setUnassignedDealIds([]);
     setAllocations([{ agentId: "", percent: 100 }]);
     setLoadingGroup(false);
     setSaving(false);
@@ -137,113 +156,92 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
   }, [open, reset]);
 
   const loadGroupLeads = React.useCallback(async () => {
-    if (!groupTitle) {
+    if (!selectedStages || selectedStages.length === 0) {
       setGroupCount(null);
       setAssignedCount(0);
-      setUnassignedLeadIds([]);
+      setUnassignedDealIds([]);
       return;
     }
 
     setLoadingGroup(true);
     try {
-      const trimmed = search.trim();
-
       let dealsQuery = supabase
         .from("monday_com_deals")
-        .select("monday_item_id", { count: "exact" })
-        .eq("group_title", groupTitle)
+        .select("id, monday_item_id", { count: "exact" })
+        .in("ghl_stage", selectedStages)
         .not("monday_item_id", "is", null)
         .order("last_updated", { ascending: false, nullsFirst: false });
-
-      if (trimmed) {
-        const escaped = trimmed.replace(/,/g, "");
-        dealsQuery = dealsQuery.or(
-          `ghl_name.ilike.%${escaped}%,deal_name.ilike.%${escaped}%,phone_number.ilike.%${escaped}%,monday_item_id.ilike.%${escaped}%`,
-        );
-      }
 
       const { data: dealRows, error: dealsError, count } = await dealsQuery.limit(2000);
       if (dealsError) throw dealsError;
 
       setGroupCount(count ?? null);
 
-      const submissionIds = Array.from(
-        new Set(
-          ((dealRows ?? []) as DealRow[])
-            .map((d) => (typeof d.monday_item_id === "string" ? d.monday_item_id.trim() : ""))
-            .filter((v) => v.length > 0),
-        ),
+      const dealIds = Array.from(
+        new Set(((dealRows ?? []) as DealRow[]).map((d) => d.id).filter((v): v is number => !!v)),
       );
 
-      if (submissionIds.length === 0) {
+      if (dealIds.length === 0) {
         setAssignedCount(0);
-        setUnassignedLeadIds([]);
+        setUnassignedDealIds([]);
         return;
       }
 
-      const { data: leadRows, error: leadsError } = await supabase
-        .from("leads")
-        .select("id, submission_id")
-        .in("submission_id", submissionIds)
-        .limit(10000);
+      // We use deal ids for bulk assignment now (assignment table references deal_id)
+      const dealIdsList: number[] = dealIds;
 
-      if (leadsError) throw leadsError;
-
-      const bySubmission = new Map<string, string>();
-      ((leadRows ?? []) as LeadRow[]).forEach((l) => {
-        if (typeof l.submission_id === "string" && l.submission_id.trim().length) {
-          bySubmission.set(l.submission_id.trim(), l.id);
-        }
-      });
-
-      const ids: string[] = [];
-      const missing: string[] = [];
-      for (const sub of submissionIds) {
-        const id = bySubmission.get(sub);
-        if (id) ids.push(id);
-        else missing.push(sub);
-      }
-
-      if (missing.length > 0) {
-        const created: string[] = [];
-        for (const sub of missing) {
-          const newId = await ensureLeadBySubmissionId({ submissionId: sub });
-          if (newId) created.push(newId);
-        }
-        ids.push(...created);
-      }
-
+      // Check which deals are already assigned
       const { data: assignedRows, error: assignedError } = await supabase
         .from("retention_assigned_leads")
-        .select("lead_id")
-        .in("lead_id", ids)
+        .select("deal_id")
+        .in("deal_id", dealIdsList)
         .eq("status", "active")
         .limit(10000);
 
       if (assignedError) throw assignedError;
 
-      const assignedSet = new Set<string>((assignedRows ?? []).map((r) => r.lead_id as string));
+      const assignedSet = new Set<number>((assignedRows ?? []).map((r) => r.deal_id as number));
       setAssignedCount(assignedSet.size);
-      setUnassignedLeadIds(ids.filter((id) => !assignedSet.has(id)));
+      setUnassignedDealIds(dealIdsList.filter((id) => !assignedSet.has(id)));
     } catch (e) {
       console.error("[bulk-assign] loadGroupLeads error", e);
       toastRef.current({
-        title: "Failed to load group",
-        description: "Could not load leads for the selected group.",
+        title: "Failed to load stage",
+        description: "Could not load leads for the selected GHL stage.",
         variant: "destructive",
       });
       setGroupCount(null);
       setAssignedCount(0);
-      setUnassignedLeadIds([]);
+      setUnassignedDealIds([]);
     } finally {
       setLoadingGroup(false);
     }
-  }, [groupTitle, search]);
+  }, [selectedStages]);
 
   React.useEffect(() => {
     if (!open) return;
+
+    // load GHL stages when modal opens
+    const loadStages = async () => {
+      setLoadingStages(true);
+      try {
+        const data = await getGhlStages();
+        setStages(data);
+      } catch (e) {
+        console.error("[bulk-assign] load stages error", e);
+      } finally {
+        setLoadingStages(false);
+      }
+    };
+
+    void loadStages();
+    // loadGroupLeads will be called when selectedStages changes
+  }, [open]);
+
+  React.useEffect(() => {
+    // whenever selected stages change, reload
     void loadGroupLeads();
-  }, [open, loadGroupLeads]);
+  }, [selectedStages, loadGroupLeads]);
 
   const onAddAgent = () => {
     setAllocations((prev) => [...prev, { agentId: "", percent: 0 }]);
@@ -257,38 +255,110 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
     setAllocations((prev) => prev.map((row, i) => (i === idx ? v : row)));
   };
 
+  // Auto-select all agents and set equal percentages when evenDistribution is enabled
+  React.useEffect(() => {
+    if (evenDistribution) {
+      // save previous allocations so we can restore if the toggle is turned off
+      prevAllocRef.current = allocations;
+      const n = agents.length;
+      if (n === 0) return;
+      const base = Math.floor(100 / n);
+      let rem = 100 - base * n;
+      const newAlloc = agents.map((a) => {
+        const extra = rem > 0 ? 1 : 0;
+        if (rem > 0) rem -= 1;
+        return { agentId: a.id, percent: base + extra } as BulkAssignAllocationRowValue;
+      });
+      setAllocations(newAlloc);
+    } else {
+      // restore previous allocations if available
+      if (prevAllocRef.current) {
+        setAllocations(prevAllocRef.current);
+        prevAllocRef.current = null;
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evenDistribution]);
+
+  const chunkArray = <T,>(arr: T[], size: number): T[][] => {
+    if (size <= 0) return [arr];
+    const out: T[][] = [];
+    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+    return out;
+  };
+
   const assignBulk = async () => {
     if (!canAssign) return;
 
     setSaving(true);
+    setAssigning(true);
     try {
-      const plan = buildLeadIdPlan(unassignedLeadIds, cleanedAllocations);
+      const plan = buildDealIdPlan(unassignedDealIds, cleanedAllocations, evenDistribution);
       if (plan.length === 0) {
         toast({
           title: "Nothing to assign",
-          description: "No leads were selected for bulk assignment.",
+          description: "No deals were selected for bulk assignment.",
           variant: "destructive",
         });
         return;
       }
 
+      const BATCH_SIZE = 500; // tune as needed
+      const batches = chunkArray(plan, BATCH_SIZE);
+
+      setAssignProgress({ total: plan.length, done: 0 });
+
       const now = new Date().toISOString();
 
-      for (const p of plan) {
-        const { error } = await supabase.from("retention_assigned_leads").insert({
-          lead_id: p.lead_id,
+      let assignedSoFar = 0;
+
+      for (let b = 0; b < batches.length; b += 1) {
+        const batch = batches[b];
+        // prepare payload for batch insert
+        const payload = batch.map((p) => ({
+          deal_id: p.deal_id,
           assignee_profile_id: p.assignee_profile_id,
           assigned_by_profile_id: p.assignee_profile_id,
           status: "active",
           assigned_at: now,
-        });
-        if (error) throw error;
+        }));
+
+        // retry logic per batch
+        const MAX_RETRIES = 3;
+        let attempt = 0;
+        let success = false;
+        let lastError: unknown = null;
+
+        while (attempt < MAX_RETRIES && !success) {
+          attempt += 1;
+          const { error } = await supabase.from("retention_assigned_leads").insert(payload);
+          if (!error) {
+            success = true;
+            assignedSoFar += payload.length;
+            setAssignProgress({ total: plan.length, done: assignedSoFar });
+          } else {
+            lastError = error;
+            console.warn(`[bulk-assign] batch insert attempt ${attempt} failed`, error);
+            // small backoff
+            await new Promise((r) => setTimeout(r, 200 * attempt));
+          }
+        }
+
+        if (!success) {
+          throw lastError;
+        }
       }
 
       toast({
         title: "Bulk assignment complete",
-        description: `Assigned ${plan.length} leads across ${cleanedAllocations.length} agent(s).`,
+        description: `Assigned ${assignedSoFar} leads across ${cleanedAllocations.length} agent(s).`,
       });
+
+      // small delay for UX so user sees 100%
+      await new Promise((res) => setTimeout(res, 300));
+
+      // refresh counts for UI
+      void loadGroupLeads();
 
       onOpenChange(false);
       onCompleted?.();
@@ -301,6 +371,8 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
       });
     } finally {
       setSaving(false);
+      setAssigning(false);
+      setAssignProgress({ total: 0, done: 0 });
     }
   };
 
@@ -313,56 +385,73 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
 
         <div className="space-y-5 py-2">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <div className="text-sm font-medium">Group Category</div>
-              <Select value={groupTitle} onValueChange={setGroupTitle}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a group" />
-                </SelectTrigger>
-                <SelectContent>
-                  {DEAL_GROUPS.map((g) => (
-                    <SelectItem key={g.id} value={g.title}>
-                      {g.title}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="space-y-2 md:col-span-2">
+              <div className="text-sm font-medium">GHL Stage(s)</div>
+              <div className="rounded-md border p-2 max-h-64 overflow-auto w-full">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-medium">Stages</div>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="ghost" onClick={() => setSelectedStages(stages.map((s) => s.stage))}>
+                      Select all
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setSelectedStages([])}>
+                      Clear
+                    </Button>
+                  </div>
+                </div>
+
+                <div>
+                  {loadingStages ? (
+                    <div className="flex items-center justify-center p-4">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    </div>
+                  ) : (
+                    stages.map((s) => (
+                      <label key={s.stage} className="flex items-center justify-between p-2">
+                        <div className="flex items-center gap-2">
+                          <Checkbox
+                            checked={selectedStages.includes(s.stage)}
+                            onCheckedChange={(c) => {
+                              const checked = !!c;
+                              setSelectedStages((prev) => (checked ? [...prev, s.stage] : prev.filter((x) => x !== s.stage)));
+                            }}
+                          />
+                          <div>{s.stage}</div>
+                        </div>
+                        <div className="text-xs text-muted-foreground">{s.count}</div>
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
 
-            <div className="space-y-2">
-              <div className="text-sm font-medium">Search within group (optional)</div>
-              <Input
-                placeholder="Search name, phone, submission ID..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                disabled={!groupTitle}
-              />
-            </div>
+
           </div>
 
           <div className="rounded-md border bg-muted/10 p-3">
             <div className="flex items-center justify-between gap-3">
               <div className="text-sm">
-                <div className="font-medium">Selected group summary</div>
+                <div className="font-medium">Selected stage summary</div>
                 <div className="text-muted-foreground">
                   {loadingGroup ? (
                     <span className="inline-flex items-center">
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading...
                     </span>
-                  ) : groupTitle ? (
+                  ) : selectedStages.length > 0 ? (
                     <>
-                      Total leads in this group: <span className="font-medium">{groupCount ?? "—"}</span>
+                      Total leads in selected stages: <span className="font-medium">{groupCount ?? "—"}</span>
                       <span className="mx-2">•</span>
                       Already assigned: <span className="font-medium">{assignedCount}</span>
                       <span className="mx-2">•</span>
-                      Unassigned: <span className="font-medium">{unassignedLeadIds.length}</span>
+                      Unassigned: <span className="font-medium">{unassignedDealIds.length}</span>
                     </>
                   ) : (
-                    "Select a group to load leads."
+                    "Select one or more GHL stages to load leads."
                   )}
                 </div>
               </div>
-              <Button variant="outline" onClick={loadGroupLeads} disabled={!groupTitle || loadingGroup || saving}>
+              <Button variant="outline" onClick={loadGroupLeads} disabled={selectedStages.length === 0 || loadingGroup || saving}>
                 {loadingGroup ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Reload
               </Button>
@@ -379,18 +468,24 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
                   Percentages can total up to 100%. Only that portion of unassigned leads will be assigned.
                 </div>
               </div>
-              <Button variant="outline" onClick={onAddAgent} disabled={saving}>
-                <Plus className="mr-2 h-4 w-4" /> Add agent
-              </Button>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <Switch checked={evenDistribution} onCheckedChange={(v) => setEvenDistribution(!!v)} />
+                  <div className="text-xs text-muted-foreground">Evenly distribute deals across agents</div>
+                </div>
+                <Button variant="outline" onClick={onAddAgent} disabled={saving || evenDistribution}>
+                  <Plus className="mr-2 h-4 w-4" /> Add agent
+                </Button>
+              </div>
             </div>
 
             <div className="space-y-2">
-              {allocations.map((row, idx) => (
+                      {allocations.map((row, idx) => (
                 <BulkAssignAllocationRow
                   key={idx}
                   value={row}
                   agents={agents}
-                  disabled={saving}
+                  disabled={saving || evenDistribution}
                   canRemove={allocations.length > 1}
                   onRemove={() => onRemoveAgent(idx)}
                   onChange={(v) => onChangeRow(idx, v)}
@@ -412,7 +507,7 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
                 <div className="text-xs text-destructive mt-2">Total percentage must be between 1% and 100%.</div>
               ) : null}
 
-              {unassignedLeadIds.length > 0 && cleanedAllocations.length > 0 ? (
+              {unassignedDealIds.length > 0 && cleanedAllocations.length > 0 ? (
                 <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-muted-foreground">
                   {computedCounts.map((c) => {
                     const agent = agents.find((a) => a.id === c.agentId);
@@ -425,6 +520,22 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
                   })}
                 </div>
               ) : null}
+
+              {evenDistribution ? (
+                <div className="text-xs text-muted-foreground mt-2">Deals are evenly distributed across agents; percentages are disabled.</div>
+              ) : null}
+
+              {assigning ? (
+                <div className="mt-3">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <div>Assigning {assignProgress.done} / {assignProgress.total}</div>
+                    <div>{assignProgress.total > 0 ? Math.round((assignProgress.done / assignProgress.total) * 100) : 0}%</div>
+                  </div>
+                  <div className="w-full bg-muted rounded h-2 mt-2">
+                    <div className="h-2 bg-emerald-500 rounded" style={{ width: `${assignProgress.total > 0 ? (assignProgress.done / assignProgress.total) * 100 : 0}%` }} />
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
@@ -433,9 +544,9 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={assignBulk} disabled={!canAssign}>
-            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-            Bulk Assign
+          <Button onClick={assignBulk} disabled={!canAssign || assigning}>
+            {assigning || saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            {assigning ? "Assigning..." : "Bulk Assign"}
           </Button>
         </DialogFooter>
       </DialogContent>
