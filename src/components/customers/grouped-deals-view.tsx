@@ -11,17 +11,33 @@ import { supabase } from "@/lib/supabase";
 import { GroupedDealsGroup, type DealGroup } from "@/components/customers/grouped-deals-group";
 
 const GROUPS: DealGroup[] = [
-  { id: "topics", title: "Pending / Submitted", color: "#757575" },
-  { id: "group_mkrtrbry", title: "Incomplete/Closed as Incomplete", color: "#579bfc" },
-  { id: "closed", title: "Issued Not Paid", color: "#ffcb00" },
-  { id: "group_mkrnbe1n", title: "Pending Lapse", color: "#ffcb00" },
-  { id: "group_mkqjtt5t", title: "DNC", color: "#ff007f" },
-  { id: "group_mknk1k9f", title: "Issued Paid", color: "#007eb5" },
-  { id: "group_mknk5erx", title: "Charged Back", color: "#bb3354" },
-  { id: "group_mkpe61ez", title: "DQ", color: "#cab641" },
-  { id: "group_mknk4n43", title: "Past ChargeBack Period", color: "#037f4c" },
-  { id: "group_mkpkvn4f", title: "Needs to be resold", color: "#ff5ac4" },
-  { id: "group_mkpt4gvj", title: "CANNOT BE FOUND IN CARRIER", color: "#fdab3d" },
+  {
+    id: "failed_payment",
+    title: "Failed Payment",
+    queryTitleIlike: ["%FDPF%", "%Failed Payment%"],
+    excludeStageIlike: ["%Chargeback%", "%Charged Back%"],
+    color: "#bb3354",
+  },
+  {
+    id: "pending_lapse",
+    title: "Pending Lapse",
+    queryStageIlike: ["%Pending Lapse%"],
+    color: "#ffcb00",
+  },
+  {
+    id: "pending_manual_action",
+    title: "Pending Manual Action",
+    queryTitleIlike: ["%Pending Manual Action%", "%Manual Action%"],
+    queryStageIlike: ["%Pending Manual Action%", "%Manual Action%"],
+    color: "#fdab3d",
+  },
+  {
+    id: "chargeback",
+    title: "Chargeback",
+    queryTitleIlike: ["%Charged Back%", "%Chargeback%"],
+    queryStageIlike: ["%Chargeback%", "%Charged Back%"],
+    color: "#bb3354",
+  },
 ];
 
 export function GroupedDealsView() {
@@ -63,7 +79,19 @@ export function GroupedDealsView() {
         if (row.group_title) s.add(row.group_title);
       }
 
-      setMatchingGroupTitles(s);
+      const visible = new Set<string>();
+      for (const g of GROUPS) {
+        const titles = (g.queryTitles && g.queryTitles.length > 0
+          ? g.queryTitles
+          : [g.queryTitle ?? g.title]
+        ).filter(Boolean);
+
+        if (titles.some((t) => s.has(t))) {
+          visible.add(g.id);
+        }
+      }
+
+      setMatchingGroupTitles(visible);
     })();
 
     return () => {
@@ -76,7 +104,7 @@ export function GroupedDealsView() {
 
     // If searching, only show groups that actually have matches.
     if (matchingGroupTitles) {
-      groups = groups.filter((g) => matchingGroupTitles.has(g.title));
+      groups = groups.filter((g) => matchingGroupTitles.has(g.id));
     }
 
     if (groupFilter === "all") return groups;
@@ -136,8 +164,8 @@ export function GroupedDealsView() {
               <TableHead className="text-xs font-bold uppercase tracking-wider text-muted-foreground py-4 px-6 w-[130px]">
                 Center
               </TableHead>
-              <TableHead className="text-xs font-bold uppercase tracking-wider text-muted-foreground py-4 px-6 w-[130px]">
-                Creation Date
+              <TableHead className="text-xs font-bold uppercase tracking-wider text-muted-foreground py-4 px-6 w-[160px]">
+                GHL Stage
               </TableHead>
               <TableHead className="text-xs font-bold uppercase tracking-wider text-muted-foreground py-4 px-6 w-[170px] text-right">
                 Actions

@@ -72,6 +72,28 @@ export function computeAllocationCounts(totalLeads: number, allocations: Allocat
   return normalized.map((a, idx) => ({ ...a, count: counts[idx] ?? 0 }));
 }
 
+export function computeEvenAllocationCounts(totalLeads: number, allocations: AllocationInput[]): AllocationComputed[] {
+  // allocations used only for agent list (agentId)
+  const cleaned = allocations.map((a) => ({ agentId: a.agentId, percent: 0 } as AllocationInput));
+  if (totalLeads <= 0 || cleaned.length === 0) {
+    return cleaned.map((a) => ({ ...a, count: 0 }));
+  }
+
+  const n = cleaned.length;
+  const base = Math.floor(totalLeads / n);
+  let remainder = totalLeads - base * n;
+
+  const counts: number[] = Array(n).fill(base);
+  let idx = 0;
+  while (remainder > 0) {
+    counts[idx] += 1;
+    remainder -= 1;
+    idx = (idx + 1) % n;
+  }
+
+  return cleaned.map((a, i) => ({ agentId: a.agentId, percent: 0, count: counts[i] }));
+}
+
 export function buildLeadIdPlan(leadIds: string[], allocations: AllocationInput[]): Array<{ lead_id: string; assignee_profile_id: string }> {
   const computed = computeAllocationCounts(leadIds.length, allocations);
   const plan: Array<{ lead_id: string; assignee_profile_id: string }> = [];
@@ -82,6 +104,23 @@ export function buildLeadIdPlan(leadIds: string[], allocations: AllocationInput[
       const leadId = leadIds[cursor];
       if (!leadId) break;
       plan.push({ lead_id: leadId, assignee_profile_id: a.agentId });
+      cursor += 1;
+    }
+  }
+
+  return plan;
+}
+
+export function buildDealIdPlan(dealIds: number[], allocations: AllocationInput[], evenDistribution = false): Array<{ deal_id: number; assignee_profile_id: string }> {
+  const computed = evenDistribution ? computeEvenAllocationCounts(dealIds.length, allocations) : computeAllocationCounts(dealIds.length, allocations);
+  const plan: Array<{ deal_id: number; assignee_profile_id: string }> = [];
+
+  let cursor = 0;
+  for (const a of computed) {
+    for (let i = 0; i < a.count; i += 1) {
+      const dealId = dealIds[cursor];
+      if (dealId === undefined || dealId === null) break;
+      plan.push({ deal_id: dealId, assignee_profile_id: a.agentId });
       cursor += 1;
     }
   }

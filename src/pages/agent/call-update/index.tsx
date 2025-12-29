@@ -1,6 +1,5 @@
-import * as React from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/router";
-
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,9 +9,39 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
-
 import { useToast } from "@/hooks/use-toast";
 import { useCallUpdate } from "@/lib/agent/call-update.logic";
+
+function normalizeVendorForMatch(vendor: string) {
+  const s = vendor
+    .trim()
+    .toLowerCase()
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const suffixes = new Set([
+    "bpo",
+    "llc",
+    "inc",
+    "ltd",
+    "corp",
+    "corporation",
+    "company",
+    "co",
+    "limited",
+    "pllc",
+    "pc",
+  ]);
+
+  const parts = s.split(" ").filter(Boolean);
+  while (parts.length > 1 && suffixes.has(parts[parts.length - 1] ?? "")) {
+    parts.pop();
+  }
+  return parts.join(" ");
+}
 
 export default function CallUpdatePage() {
   const router = useRouter();
@@ -56,23 +85,23 @@ export default function CallUpdatePage() {
     titleizeKey,
   } = useCallUpdate();
 
-  const [saving, setSaving] = React.useState(false);
+  const [saving, setSaving] = useState(false);
 
-  const [applicationSubmitted, setApplicationSubmitted] = React.useState<"yes" | "no">("yes");
-  const [callSource, setCallSource] = React.useState("");
-  const [bufferAgent, setBufferAgent] = React.useState("");
-  const [licensedAgent, setLicensedAgent] = React.useState("");
-  const [notes, setNotes] = React.useState("");
-  const [statusStage, setStatusStage] = React.useState("");
-  const [submissionDate, setSubmissionDate] = React.useState("");
-  const [draftDate, setDraftDate] = React.useState("");
-  const [monthlyPremium, setMonthlyPremium] = React.useState("");
-  const [coverageAmount, setCoverageAmount] = React.useState("");
-  const [sentToUnderwriting, setSentToUnderwriting] = React.useState<"yes" | "no" | "">("");
-  const [selectedCenter, setSelectedCenter] = React.useState("");
-  const [selectedCarrier, setSelectedCarrier] = React.useState("");
+  const [applicationSubmitted, setApplicationSubmitted] = useState<"yes" | "no">("yes");
+  const [callSource, setCallSource] = useState("");
+  const [bufferAgent, setBufferAgent] = useState("");
+  const [licensedAgent, setLicensedAgent] = useState("");
+  const [notes, setNotes] = useState("");
+  const [statusStage, setStatusStage] = useState("");
+  const [submissionDate, setSubmissionDate] = useState("");
+  const [draftDate, setDraftDate] = useState("");
+  const [monthlyPremium, setMonthlyPremium] = useState("");
+  const [coverageAmount, setCoverageAmount] = useState("");
+  const [sentToUnderwriting, setSentToUnderwriting] = useState<"yes" | "no" | "">("");
+  const [selectedCenter, setSelectedCenter] = useState("");
+  const [selectedCarrier, setSelectedCarrier] = useState("");
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (!dealFlowRow) return;
     setBufferAgent(dealFlowRow.buffer_agent ?? "");
     setLicensedAgent(dealFlowRow.licensed_agent_account ?? "");
@@ -476,7 +505,9 @@ export default function CallUpdatePage() {
                           <SelectContent>
                             {selectedCenter.trim().length &&
                             !centerOptions.some(
-                              (c) => (c.lead_vendor ?? "").toString().trim() === selectedCenter.trim(),
+                              (c) =>
+                                normalizeVendorForMatch((c.lead_vendor ?? "").toString()) ===
+                                normalizeVendorForMatch(selectedCenter),
                             ) ? (
                               <SelectItem value={selectedCenter.trim()}>{selectedCenter.trim()}</SelectItem>
                             ) : null}

@@ -15,6 +15,14 @@ import { ChevronDownIcon, ChevronRightIcon, EyeIcon } from "lucide-react";
 export type DealGroup = {
   id: string;
   title: string;
+  queryTitle?: string;
+  queryTitles?: string[];
+  queryTitleIlike?: string[];
+  queryStage?: string;
+  queryStages?: string[];
+  queryStageIlike?: string[];
+  excludeTitleIlike?: string[];
+  excludeStageIlike?: string[];
   color: string;
 };
 
@@ -26,9 +34,9 @@ type DealRow = Pick<
   | "carrier"
   | "policy_status"
   | "ghl_name"
+  | "ghl_stage"
   | "phone_number"
   | "call_center"
-  | "deal_creation_date"
   | "deal_name"
 >;
 
@@ -73,17 +81,60 @@ export function GroupedDealsGroup({
     const from = (page - 1) * pageSize;
     const to = from + pageSize;
 
+    const titles = (group.queryTitles && group.queryTitles.length > 0
+      ? group.queryTitles
+      : [group.queryTitle ?? group.title]
+    ).filter(Boolean);
+
+    const ilikePatterns = (group.queryTitleIlike ?? []).filter(Boolean);
+
+    const stages = (group.queryStages && group.queryStages.length > 0
+      ? group.queryStages
+      : group.queryStage
+        ? [group.queryStage]
+        : []
+    ).filter(Boolean);
+
+    const stageIlikePatterns = (group.queryStageIlike ?? []).filter(Boolean);
+    const excludeTitleIlike = (group.excludeTitleIlike ?? []).filter(Boolean);
+    const excludeStageIlike = (group.excludeStageIlike ?? []).filter(Boolean);
+
     setLoading(true);
     try {
       let q = supabase
         .from("monday_com_deals")
         .select(
-          "id,monday_item_id,policy_number,carrier,policy_status,ghl_name,phone_number,call_center,deal_creation_date,deal_name",
+          "id,monday_item_id,policy_number,carrier,policy_status,ghl_name,ghl_stage,phone_number,call_center,deal_name",
           { count: "exact" }
         )
-        .eq("group_title", group.title)
         .order("last_updated", { ascending: false, nullsFirst: false })
         .range(from, to);
+
+      const includeOr: string[] = [];
+
+      for (const p of ilikePatterns) includeOr.push(`group_title.ilike.${p}`);
+      for (const t of titles) includeOr.push(`group_title.eq.${t}`);
+
+      for (const p of stageIlikePatterns) includeOr.push(`ghl_stage.ilike.${p}`);
+      for (const s of stages) includeOr.push(`ghl_stage.eq.${s}`);
+
+      // If any stage-based filter is provided, use a single OR-expression across all include rules.
+      // Otherwise, fall back to the exact group_title filter for maximum index friendliness.
+      const shouldUseOr = stageIlikePatterns.length > 0 || stages.length > 0 || ilikePatterns.length > 0;
+
+      if (shouldUseOr) {
+        q = q.or(includeOr.join(","));
+      } else {
+        q = q.in("group_title", titles);
+      }
+
+      for (const p of excludeTitleIlike) {
+        q = q.not("group_title", "ilike", p);
+      }
+
+      for (const p of excludeStageIlike) {
+        q = q.not("ghl_stage", "ilike", p);
+      }
 
       const trimmed = search.trim();
       if (trimmed) {
@@ -110,7 +161,20 @@ export function GroupedDealsGroup({
     } finally {
       setLoading(false);
     }
-  }, [group.title, page, pageSize, search]);
+  }, [
+    group.excludeStageIlike,
+    group.excludeTitleIlike,
+    group.queryStage,
+    group.queryStageIlike,
+    group.queryStages,
+    group.queryTitle,
+    group.queryTitleIlike,
+    group.queryTitles,
+    group.title,
+    page,
+    pageSize,
+    search,
+  ]);
 
   React.useEffect(() => {
     void fetchData();
@@ -194,8 +258,8 @@ export function GroupedDealsGroup({
                       {deal.call_center ?? "—"}
                     </Badge>
                   </TableCell>
-                  <TableCell className="py-5 px-6 text-sm w-[130px]">
-                    {deal.deal_creation_date ? new Date(deal.deal_creation_date).toLocaleDateString() : "—"}
+                  <TableCell className="py-5 px-6 text-sm w-[160px]">
+                    <span className="truncate block max-w-[160px]">{deal.ghl_stage ?? "—"}</span>
                   </TableCell>
                   <TableCell className="py-5 px-6 text-sm w-[170px] align-top">
                     <div className="flex flex-col items-end justify-center gap-2">

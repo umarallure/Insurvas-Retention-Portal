@@ -1,7 +1,7 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { RefreshCcw } from "lucide-react";
-import { GroupedDealsView } from "@/components/customers/grouped-deals-view";
+import { DealsKanbanView } from "@/components/customers/deals-kanban-view";
 
 export default function CustomersPage() {
   const [mounted, setMounted] = React.useState(false);
@@ -19,8 +19,8 @@ export default function CustomersPage() {
   }, []);
 
   return (
-    <div className="w-full px-8 py-10 min-h-screen bg-muted/20">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+    <div className="w-full px-8 py-10 h-screen overflow-hidden bg-muted/20 flex flex-col">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 shrink-0">
         <div>
             <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Customer Pipeline</h1>
             <p className="text-muted-foreground text-sm mt-1">Real-time synchronization with your Monday.com board.</p>
@@ -38,8 +38,8 @@ export default function CustomersPage() {
         </Button>
       </div>
 
-      <div className="max-w-6xl mx-auto">
-        {mounted ? <GroupedDealsView key={refreshToken} /> : null}
+      <div className="max-w-6xl mx-auto w-full flex-1 min-h-0">
+        {mounted ? <DealsKanbanView key={refreshToken} /> : null}
       </div>
     </div>
   );

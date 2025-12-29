@@ -31,6 +31,68 @@ export function buildDigitWildcardPattern(digits: string) {
   return `%${clean.split("").join("%")}%`;
 }
 
+ function normalizeVendorForMatch(vendor: string) {
+   const s = vendor
+     .trim()
+     .toLowerCase()
+     .replace(/[\u2018\u2019]/g, "'")
+     .replace(/[\u201C\u201D]/g, '"')
+     .replace(/[^a-z0-9\s]/g, " ")
+     .replace(/\s+/g, " ")
+     .trim();
+
+   // Remove common legal suffixes so "Ambition" can match "Ambition BPO".
+   const suffixes = new Set([
+     "bpo",
+     "llc",
+     "inc",
+     "ltd",
+     "corp",
+     "corporation",
+     "company",
+     "co",
+     "limited",
+     "pllc",
+     "pc",
+   ]);
+
+   const parts = s.split(" ").filter(Boolean);
+   while (parts.length > 1 && suffixes.has(parts[parts.length - 1] ?? "")) {
+     parts.pop();
+   }
+   return parts.join(" ");
+ }
+
+ function buildLeadVendorOrFilter(leadVendorRaw: string) {
+   const raw = leadVendorRaw.trim();
+   if (!raw.length) return null;
+
+   // Remove LIKE wildcards to avoid accidental broad matches.
+   const cleanedRaw = raw.replace(/[%_]/g, " ").replace(/\s+/g, " ").trim();
+   const normalizedCore = normalizeVendorForMatch(cleanedRaw);
+   const coreTitle = normalizedCore
+     .split(" ")
+     .map((p) => (p.length ? p[0]!.toUpperCase() + p.slice(1) : p))
+     .join(" ");
+
+   const patterns = Array.from(
+     new Set(
+       [
+         cleanedRaw,
+         cleanedRaw.toLowerCase(),
+         normalizedCore,
+         coreTitle,
+         `${normalizedCore} %`,
+         `${coreTitle} %`,
+       ]
+         .map((p) => p.trim())
+         .filter((p) => p.length)
+     )
+   );
+
+   return patterns.map((p) => `lead_vendor.ilike.${p}`).join(",");
+ }
+
 export function getString(row: LeadRecord | null, key: string): string | null {
   if (!row) return null;
   const v = row[key];
@@ -119,10 +181,12 @@ export function formatCurrency(value: unknown): string {
 export function useAssignedLeadDetails() {
   const router = useRouter();
   const idParam = router.query.id;
+  const dealIdParam = router.query.dealId;
 
   const [lead, setLead] = useState<LeadRecord | null>(null);
   const [personalLead, setPersonalLead] = useState<LeadRecord | null>(null);
   const [personalLeadLoading, setPersonalLeadLoading] = useState(false);
+  const [selectedDeal, setSelectedDeal] = useState<MondayComDeal | null>(null);
   const [mondayDeals, setMondayDeals] = useState<MondayComDeal[]>([]);
   const [mondayLoading, setMondayLoading] = useState(false);
   const [mondayError, setMondayError] = useState<string | null>(null);
@@ -250,9 +314,18 @@ export function useAssignedLeadDetails() {
   useEffect(() => {
     if (!router.isReady) return;
 
+    const rawDealId =
+      typeof dealIdParam === "string" ? dealIdParam : Array.isArray(dealIdParam) ? dealIdParam[0] : undefined;
+    const parsedDealId = rawDealId ? Number(rawDealId) : null;
+    const dealId = parsedDealId != null && Number.isFinite(parsedDealId) ? parsedDealId : null;
+
     const id = typeof idParam === "string" ? idParam : Array.isArray(idParam) ? idParam[0] : undefined;
-    if (!id) {
-      setError("Missing lead id in URL.");
+    const leadId = id && id.trim().length ? id : null;
+
+    if (!dealId && !leadId) {
+      setError("Missing deal id in URL.");
+      setSelectedDeal(null);
+      setMondayDeals([]);
       setLead(null);
       setLoading(false);
       return;
@@ -260,40 +333,128 @@ export function useAssignedLeadDetails() {
 
     let cancelled = false;
 
-    const loadLead = async () => {
+    const load = async () => {
       setLoading(true);
       setError(null);
       try {
-        const { data, error: leadsError } = await supabase
-          .from("leads")
-          .select("*")
-          .eq("id", id)
-          .maybeSingle();
+        if (dealId) {
+          setMondayLoading(true);
+          setMondayError(null);
 
-        if (leadsError) throw leadsError;
+          const { data: dealRow, error: dealErr } = await supabase
+            .from("monday_com_deals")
+            .select("*")
+            .eq("id", dealId)
+            .maybeSingle();
 
-        if (!cancelled) {
-          setLead((data ?? null) as LeadRecord | null);
+          if (dealErr) throw dealErr;
+          const deal = (dealRow ?? null) as MondayComDeal | null;
+
+          // If we navigated via a specific deal id, still load all other Monday deals
+          // for the same customer so multiple policies render as separate cards.
+          if (deal) {
+            const orParts: string[] = [];
+
+            const ghlName = typeof deal.ghl_name === "string" ? deal.ghl_name.trim() : "";
+            const dealName = typeof deal.deal_name === "string" ? deal.deal_name.trim() : "";
+            const phone = typeof deal.phone_number === "string" ? deal.phone_number.trim() : "";
+            const policyNo = typeof deal.policy_number === "string" ? deal.policy_number.trim() : "";
+
+            if (ghlName) orParts.push(`ghl_name.ilike.%${ghlName.replace(/,/g, "")}%`);
+            if (dealName) orParts.push(`deal_name.ilike.%${dealName.replace(/,/g, "")}%`);
+            if (phone) orParts.push(`phone_number.eq.${phone.replace(/,/g, "")}`);
+            if (policyNo) orParts.push(`policy_number.eq.${policyNo.replace(/,/g, "")}`);
+
+            let relatedDeals: MondayComDeal[] = [deal];
+
+            if (orParts.length) {
+              const { data: relatedRows, error: relatedErr } = await supabase
+                .from("monday_com_deals")
+                .select("*")
+                .or(orParts.join(","))
+                .order("last_updated", { ascending: false, nullsFirst: false });
+
+              if (relatedErr) throw relatedErr;
+              relatedDeals = ((relatedRows ?? []) as MondayComDeal[]) ?? [];
+            }
+
+            if (!cancelled) {
+              setSelectedDeal(deal);
+              setMondayDeals(relatedDeals);
+            }
+          } else if (!cancelled) {
+            setSelectedDeal(null);
+            setMondayDeals([]);
+          }
+
+          const submissionId = deal && typeof deal.monday_item_id === "string" ? deal.monday_item_id.trim() : "";
+          if (submissionId) {
+            const { data: leadRow, error: leadErr } = await supabase
+              .from("leads")
+              .select("*")
+              .eq("submission_id", submissionId)
+              .order("updated_at", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            if (leadErr) throw leadErr;
+            if (!cancelled) setLead((leadRow ?? null) as LeadRecord | null);
+          } else if (!cancelled) {
+            setLead(null);
+          }
+
+          if (!cancelled) {
+            setMondayLoading(false);
+            setMondayError(null);
+          }
+          return;
+        }
+
+        if (leadId) {
+          const { data, error: leadsError } = await supabase
+            .from("leads")
+            .select("*")
+            .eq("id", leadId)
+            .maybeSingle();
+
+          if (leadsError) throw leadsError;
+
+          if (!cancelled) {
+            setLead((data ?? null) as LeadRecord | null);
+          }
         }
       } catch (e) {
         if (!cancelled) {
           const msg = e instanceof Error ? e.message : "Failed to load lead.";
           setError(msg);
+          setSelectedDeal(null);
+          setMondayDeals([]);
           setLead(null);
+          setMondayLoading(false);
+          setMondayError(msg);
         }
       } finally {
         if (!cancelled) setLoading(false);
       }
     };
 
-    void loadLead();
+    void load();
 
     return () => {
       cancelled = true;
     };
-  }, [router.isReady, idParam]);
+  }, [router.isReady, dealIdParam, idParam]);
 
   useEffect(() => {
+    if (selectedDeal) {
+      setPersonalLead(null);
+      setPersonalLeadLoading(false);
+      setDuplicateResult(null);
+      setDuplicateError(null);
+      setDuplicateLoading(false);
+      return;
+    }
+
     if (!lead) {
       setPersonalLead(null);
       setPersonalLeadLoading(false);
@@ -375,19 +536,41 @@ export function useAssignedLeadDetails() {
     return () => {
       cancelled = true;
     };
-  }, [lead]);
+  }, [lead, selectedDeal, selectedPolicyKey]);
 
-  const canonicalLeadRecord = personalLead ?? lead;
+  const canonicalLeadRecord = personalLead ?? lead ?? (selectedDeal ? (selectedDeal as unknown as LeadRecord) : null);
 
   useEffect(() => {
-    if (!lead) {
-      setPersonalLead(null);
-      setPersonalLeadLoading(false);
-      return;
-    }
+    const lookupName =
+      getString(lead, "customer_full_name") ??
+      getString(selectedDeal ? (selectedDeal as unknown as LeadRecord) : null, "ghl_name") ??
+      getString(selectedDeal ? (selectedDeal as unknown as LeadRecord) : null, "deal_name") ??
+      null;
 
-    const rawPhone = getString(lead, "phone_number");
-    if (!rawPhone) {
+    const selectedCallCenter = (() => {
+      const keyFor = (d: MondayComDeal) =>
+        (d.monday_item_id && d.monday_item_id.trim().length ? `item:${d.monday_item_id.trim()}` : null) ??
+        `id:${String(d.id)}`;
+
+      const all: MondayComDeal[] = [];
+      all.push(...(mondayDeals ?? []));
+
+      if (duplicateResult?.mondayDealsByGhlName) {
+        for (const deals of Object.values(duplicateResult.mondayDealsByGhlName)) {
+          all.push(...(deals ?? []));
+        }
+      }
+
+      const found = selectedPolicyKey ? all.find((d) => keyFor(d) === selectedPolicyKey) : null;
+      return found?.call_center ?? null;
+    })();
+
+    const leadVendor =
+      (selectedCallCenter && selectedCallCenter !== "—" ? selectedCallCenter : null) ??
+      getString(selectedDeal ? (selectedDeal as unknown as LeadRecord) : null, "call_center") ??
+      null;
+
+    if (!lookupName) {
       setPersonalLead(null);
       setPersonalLeadLoading(false);
       return;
@@ -398,67 +581,35 @@ export function useAssignedLeadDetails() {
     const run = async () => {
       setPersonalLeadLoading(true);
       try {
-        const { data: exactRow, error: exactError } = await supabase
-          .from("leads")
-          .select("*")
-          .eq("phone_number", rawPhone)
-          .order("updated_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (exactError) throw exactError;
-
-        const digits = normalizePhoneDigits(rawPhone);
-        const last10 = digits.length >= 10 ? digits.slice(-10) : digits;
-        const pattern = buildDigitWildcardPattern(last10);
-
-        if (exactRow) {
-          if (!cancelled) setPersonalLead((exactRow ?? null) as LeadRecord | null);
+        // 1) Preferred: search leads by customer_full_name (GHL name)
+        const escaped = lookupName.replace(/,/g, "").trim();
+        if (!escaped.length) {
+          if (!cancelled) setPersonalLead(null);
           return;
         }
 
-        let fuzzyCandidates: LeadRecord[] = [];
-        if (pattern) {
-          const { data: fuzzyRows, error: fuzzyError } = await supabase
-            .from("leads")
-            .select("*")
-            .ilike("phone_number", pattern)
-            .order("updated_at", { ascending: false })
-            .limit(25);
+        let q = supabase
+          .from("leads")
+          .select("*")
+          .ilike("customer_full_name", `%${escaped}%`)
+          .order("updated_at", { ascending: false })
+          .order("submission_date", { ascending: false })
+          .limit(25);
 
-          if (fuzzyError) throw fuzzyError;
-          fuzzyCandidates = ((fuzzyRows ?? []) as LeadRecord[]).filter((r) => {
-            const candPhone = normalizePhoneDigits(getString(r, "phone_number") ?? "");
-            return candPhone.endsWith(last10);
-          });
+        if (leadVendor && leadVendor.trim().length) {
+          const vendorOr = buildLeadVendorOrFilter(leadVendor);
+          if (vendorOr) {
+            q = q.or(vendorOr);
+          }
         }
 
-        const candidates: LeadRecord[] = [];
-        for (const c of [exactRow, ...fuzzyCandidates]) {
-          if (!c) continue;
-          candidates.push(c as LeadRecord);
-        }
+        const { data: byNameRows, error: byNameErr } = await q;
+        if (byNameErr) throw byNameErr;
 
-        const uniqueById = new Map<string, LeadRecord>();
-        for (const c of candidates) {
-          const id = getString(c, "id") ?? "";
-          if (!id) continue;
-          if (!uniqueById.has(id)) uniqueById.set(id, c);
-        }
+        const byName = (byNameRows ?? []) as LeadRecord[];
+        const chosenByName = byName.length ? (byName[0] as LeadRecord) : null;
 
-        const uniqueCandidates = Array.from(uniqueById.values()).map((row) => {
-          const scored = scoreCanonicalLeadCandidate(row);
-          return { row, score: scored.score, recency: scored.recency };
-        });
-
-        const chosen =
-          uniqueCandidates
-            .sort((a, b) => {
-              if (a.score !== b.score) return b.score - a.score;
-              return b.recency - a.recency;
-            })[0]?.row ?? null;
-
-        if (!cancelled) setPersonalLead(chosen);
+        if (!cancelled) setPersonalLead(chosenByName);
       } finally {
         if (!cancelled) setPersonalLeadLoading(false);
       }
@@ -469,15 +620,22 @@ export function useAssignedLeadDetails() {
     return () => {
       cancelled = true;
     };
-  }, [lead]);
+  }, [duplicateResult, lead, mondayDeals, selectedDeal, selectedPolicyKey]);
 
-  const name = getString(canonicalLeadRecord, "customer_full_name") ?? "Unknown";
-  const phone = getString(canonicalLeadRecord, "phone_number") ?? "-";
+  const dealFallback = selectedDeal ? (selectedDeal as unknown as LeadRecord) : null;
+
+  const name =
+    getString(canonicalLeadRecord, "customer_full_name") ??
+    getString(dealFallback, "ghl_name") ??
+    getString(dealFallback, "deal_name") ??
+    "Unknown";
+  const phone = getString(canonicalLeadRecord, "phone_number") ?? getString(dealFallback, "phone_number") ?? "-";
   const email = getString(canonicalLeadRecord, "email") ?? "-";
   const policyNumber = getString(canonicalLeadRecord, "policy_number") ?? "-";
-  const carrier = getString(canonicalLeadRecord, "carrier") ?? "-";
-  const productType = getString(canonicalLeadRecord, "product_type") ?? "-";
-  const center = getString(canonicalLeadRecord, "lead_vendor") ?? "-";
+  const carrier = getString(canonicalLeadRecord, "carrier") ?? getString(dealFallback, "carrier") ?? "-";
+  const productType =
+    getString(canonicalLeadRecord, "product_type") ?? getString(dealFallback, "policy_type") ?? "-";
+  const center = getString(canonicalLeadRecord, "lead_vendor") ?? getString(dealFallback, "call_center") ?? "-";
   const address1 = getString(canonicalLeadRecord, "street_address") ?? "-";
   const city = getString(canonicalLeadRecord, "city") ?? "-";
   const state = getString(canonicalLeadRecord, "state") ?? "-";
@@ -541,7 +699,18 @@ export function useAssignedLeadDetails() {
     }
 
     const p = getString(canonicalLeadRecord, "phone_number");
-    if (!p) {
+    const insuredName = getString(canonicalLeadRecord, "customer_full_name");
+
+    const insuredNameEscaped = (insuredName ?? "").replace(/,/g, "").trim();
+
+    const phoneDigits = normalizePhoneDigits(p ?? "");
+    const last10 = phoneDigits.length >= 10 ? phoneDigits.slice(-10) : phoneDigits;
+    const phonePattern = last10 ? buildDigitWildcardPattern(last10) : null;
+
+    const hasAnyFilter =
+      (!!p && p.trim().length > 0) || (!!insuredNameEscaped && insuredNameEscaped.length > 0);
+
+    if (!hasAnyFilter) {
       setDailyFlowRows([]);
       setDailyFlowError(null);
       setDailyFlowLoading(false);
@@ -554,12 +723,25 @@ export function useAssignedLeadDetails() {
       setDailyFlowLoading(true);
       setDailyFlowError(null);
       try {
-        const { data, error: dfError } = await supabase
-          .from("daily_deal_flow")
-          .select("*")
-          .eq("client_phone_number", p)
-          .order("date", { ascending: false })
-          .limit(100);
+        let q = supabase.from("daily_deal_flow").select("*");
+
+        // Fetch broadly for the insured: by phone and/or name.
+        // IMPORTANT: use OR so we don't accidentally filter out a different vendor's row.
+        const orParts: string[] = [];
+        if (insuredNameEscaped.length) {
+          orParts.push(`insured_name.ilike.%${insuredNameEscaped}%`);
+        }
+        if (phonePattern) {
+          orParts.push(`client_phone_number.ilike.${phonePattern}`);
+        }
+
+        if (orParts.length) {
+          q = q.or(orParts.join(","));
+        }
+
+        q = q.order("date", { ascending: false }).limit(250);
+
+        const { data, error: dfError } = await q;
 
         if (dfError) throw dfError;
 
@@ -569,7 +751,7 @@ export function useAssignedLeadDetails() {
           return;
         }
 
-        const digits = normalizePhoneDigits(p);
+        const digits = normalizePhoneDigits(p ?? "");
         const last10 = digits.length >= 10 ? digits.slice(-10) : digits;
         if (!last10) {
           if (!cancelled) setDailyFlowRows([]);
@@ -582,12 +764,15 @@ export function useAssignedLeadDetails() {
           return;
         }
 
-        const { data: fuzzyData, error: fuzzyErr } = await supabase
-          .from("daily_deal_flow")
-          .select("*")
-          .ilike("client_phone_number", pattern)
-          .order("date", { ascending: false })
-          .limit(100);
+        let fq = supabase.from("daily_deal_flow").select("*").ilike("client_phone_number", pattern);
+
+        if (insuredNameEscaped.length) {
+          fq = fq.ilike("insured_name", `%${insuredNameEscaped}%`);
+        }
+
+        fq = fq.order("date", { ascending: false }).limit(250);
+
+        const { data: fuzzyData, error: fuzzyErr } = await fq;
 
         if (fuzzyErr) throw fuzzyErr;
         if (!cancelled) setDailyFlowRows((fuzzyData ?? []) as Array<Record<string, unknown>>);
@@ -645,7 +830,6 @@ export function useAssignedLeadDetails() {
     const byKey = new Map<string, MondayComDeal>();
     for (const d of all) {
       const key =
-        (d.policy_number && d.policy_number.trim().length ? `policy:${d.policy_number.trim()}` : null) ??
         (d.monday_item_id && d.monday_item_id.trim().length ? `item:${d.monday_item_id.trim()}` : null) ??
         `id:${String(d.id)}`;
 
@@ -668,32 +852,129 @@ export function useAssignedLeadDetails() {
 
     const first = policyCards[0];
     const key =
-      (first.policy_number && first.policy_number.trim().length ? `policy:${first.policy_number.trim()}` : null) ??
       (first.monday_item_id && first.monday_item_id.trim().length ? `item:${first.monday_item_id.trim()}` : null) ??
       `id:${String(first.id)}`;
     setSelectedPolicyKey(key);
   }, [policyCards, selectedPolicyKey]);
 
   const policyViews = useMemo(() => {
-    const findDdfForPolicy = (policy: MondayComDeal) => {
-      const policyNo = typeof policy.policy_number === "string" ? policy.policy_number.trim() : "";
-      if (!policyNo) return null;
+    const ddfRows = (dailyFlowRows ?? []) as Array<Record<string, unknown>>;
 
-      for (const row of dailyFlowRows) {
-        const ddfPolicy = pickRowValue(row, ["policy_number", "policy_no", "policy", "policyNumber"]);
-        const ddfPolicyStr = typeof ddfPolicy === "string" ? ddfPolicy.trim() : "";
-        if (ddfPolicyStr && ddfPolicyStr === policyNo) return row;
-      }
-      return null;
+    const getPolicyNumber = (policy: MondayComDeal) =>
+      (typeof policy.policy_number === "string" ? policy.policy_number.trim() : "") || "";
+
+    const getDdfPolicyNumber = (row: Record<string, unknown>) => {
+      const ddfPolicy = pickRowValue(row, ["policy_number", "policy_no", "policy", "policyNumber"]);
+      return typeof ddfPolicy === "string" ? ddfPolicy.trim() : "";
     };
+
+    const getPolicyVendorKey = (policy: MondayComDeal) => {
+      const v = typeof policy.call_center === "string" ? policy.call_center : "";
+      return normalizeVendorForMatch(v);
+    };
+
+    const getDdfVendorKey = (row: Record<string, unknown>) => {
+      const v = pickRowValue(row, ["lead_vendor", "call_center", "vendor"]); 
+      return typeof v === "string" ? normalizeVendorForMatch(v) : "";
+    };
+
+    const scoreDdfForPolicy = (policy: MondayComDeal, row: Record<string, unknown>) => {
+      const policyCarrier = typeof policy.carrier === "string" ? policy.carrier.trim().toLowerCase() : "";
+      const policyProduct = typeof policy.policy_type === "string" ? policy.policy_type.trim().toLowerCase() : "";
+      const policyVendorKey = getPolicyVendorKey(policy);
+
+      const ddfCarrier = pickRowValue(row, ["carrier"]);
+      const ddfProduct = pickRowValue(row, ["product_type"]);
+      const ddfCarrierStr = typeof ddfCarrier === "string" ? ddfCarrier.trim().toLowerCase() : "";
+      const ddfProductStr = typeof ddfProduct === "string" ? ddfProduct.trim().toLowerCase() : "";
+
+      const ddfVendorKey = getDdfVendorKey(row);
+
+      let score = 0;
+      if (policyVendorKey && ddfVendorKey && policyVendorKey === ddfVendorKey) score += 80;
+      if (policyCarrier && ddfCarrierStr && policyCarrier === ddfCarrierStr) score += 50;
+      if (policyProduct && ddfProductStr && policyProduct === ddfProductStr) score += 25;
+
+      const tPolicy =
+        Date.parse(String(policy.last_updated ?? policy.updated_at ?? policy.deal_creation_date ?? "")) || 0;
+      const ddfDate = pickRowValue(row, ["date", "created_at", "updated_at"]);
+      const tDdf = typeof ddfDate === "string" ? Date.parse(ddfDate) || 0 : 0;
+      if (tPolicy && tDdf) {
+        const diffDays = Math.abs(tPolicy - tDdf) / (1000 * 60 * 60 * 24);
+        score += Math.max(0, 20 - Math.min(20, diffDays));
+      }
+
+      // Prefer rows that actually have the values we want to show.
+      const hasPremium = pickRowValue(row, ["monthly_premium", "premium"]) != null;
+      const hasCoverage = pickRowValue(row, ["face_amount", "coverage_amount", "coverage"]) != null;
+      const hasDraft = pickRowValue(row, ["draft_date", "initial_draft_date"]) != null;
+      score += (hasPremium ? 5 : 0) + (hasCoverage ? 5 : 0) + (hasDraft ? 5 : 0);
+
+      return score;
+    };
+
+    // Build a one-to-one mapping from policy -> best daily_deal_flow row.
+    const policyToDdf = new Map<string, Record<string, unknown>>();
+    const usedDdfIds = new Set<string>();
+
+    const ddfKeyFor = (row: Record<string, unknown>) => {
+      const id = row["id"];
+      if (typeof id === "string" && id.trim().length) return `id:${id.trim()}`;
+      const sub = row["submission_id"];
+      const dt = row["date"];
+      return `fallback:${String(sub ?? "")}|${String(dt ?? "")}`;
+    };
+
+    // 1) Exact policy_number matches first (unique)
+    for (const policy of policyCards ?? []) {
+      const key =
+        (policy.monday_item_id && policy.monday_item_id.trim().length ? `item:${policy.monday_item_id.trim()}` : null) ??
+        `id:${String(policy.id)}`;
+      const policyNo = getPolicyNumber(policy);
+      if (!policyNo) continue;
+
+      const match = ddfRows.find((r) => {
+        const rNo = getDdfPolicyNumber(r);
+        if (!rNo || rNo !== policyNo) return false;
+        const dk = ddfKeyFor(r);
+        return !usedDdfIds.has(dk);
+      });
+      if (match) {
+        policyToDdf.set(key, match);
+        usedDdfIds.add(ddfKeyFor(match));
+      }
+    }
+
+    // 2) Remaining policies: best-score unused row
+    for (const policy of policyCards ?? []) {
+      const key =
+        (policy.monday_item_id && policy.monday_item_id.trim().length ? `item:${policy.monday_item_id.trim()}` : null) ??
+        `id:${String(policy.id)}`;
+      if (policyToDdf.has(key)) continue;
+
+      let best: Record<string, unknown> | null = null;
+      let bestScore = -1;
+      for (const r of ddfRows) {
+        const dk = ddfKeyFor(r);
+        if (usedDdfIds.has(dk)) continue;
+        const s = scoreDdfForPolicy(policy, r);
+        if (s > bestScore) {
+          bestScore = s;
+          best = r;
+        }
+      }
+      if (best) {
+        policyToDdf.set(key, best);
+        usedDdfIds.add(ddfKeyFor(best));
+      }
+    }
 
     const views = (policyCards ?? []).map((d) => {
       const key =
-        (d.policy_number && d.policy_number.trim().length ? `policy:${d.policy_number.trim()}` : null) ??
         (d.monday_item_id && d.monday_item_id.trim().length ? `item:${d.monday_item_id.trim()}` : null) ??
         `id:${String(d.id)}`;
 
-      const ddf = findDdfForPolicy(d);
+      const ddf = policyToDdf.get(key) ?? null;
 
       const status = d.policy_status ?? d.status ?? "—";
       const statusNotes =
@@ -701,11 +982,11 @@ export function useAssignedLeadDetails() {
         (ddf ? (pickRowValue(ddf, ["status_notes", "status_note", "failed_payment_reason", "reason"]) as string | null) : null) ??
         "—";
 
-      const coverage = ddf ? pickRowValue(ddf, ["coverage_amount", "coverage", "face_amount", "faceAmount"]) : null;
-      const monthlyPremium =
-        d.deal_value ??
-        (ddf ? pickRowValue(ddf, ["monthly_premium", "premium", "monthlyPremium"]) : null);
-      const initialDraftDate = ddf ? pickRowValue(ddf, ["initial_draft_date", "draft_date", "initialDraftDate"]) : null;
+      const coverage = ddf ? pickRowValue(ddf, ["face_amount", "coverage_amount", "coverage", "faceAmount"]) : null;
+      const monthlyPremium = ddf
+        ? pickRowValue(ddf, ["monthly_premium", "premium", "monthlyPremium"])
+        : d.deal_value ?? null;
+      const initialDraftDate = ddf ? pickRowValue(ddf, ["draft_date", "initial_draft_date", "initialDraftDate"]) : null;
 
       return {
         key,
@@ -764,9 +1045,17 @@ export function useAssignedLeadDetails() {
     map["insurance_application_details"] = fromLead("insurance_application_details");
 
     map["carrier"] = fromLead("carrier") || fromMonday("carrier");
-    map["monthly_premium"] = fromLead("monthly_premium") || (selectedPolicyView?.monthlyPremium != null ? String(selectedPolicyView.monthlyPremium) : fromMonday("deal_value"));
-    map["coverage_amount"] = fromLead("coverage_amount") || (selectedPolicyView?.coverage != null ? String(selectedPolicyView.coverage) : "");
-    map["draft_date"] = fromLead("draft_date") || (selectedPolicyView?.initialDraftDate != null ? String(selectedPolicyView.initialDraftDate) : "");
+    // Prefer values mapped per-policy from daily_deal_flow (selectedPolicyView) over lead-wide fields.
+    map["monthly_premium"] =
+      (selectedPolicyView?.monthlyPremium != null ? String(selectedPolicyView.monthlyPremium) : "") ||
+      fromLead("monthly_premium") ||
+      fromMonday("deal_value");
+    map["coverage_amount"] =
+      (selectedPolicyView?.coverage != null ? String(selectedPolicyView.coverage) : "") || fromLead("coverage_amount") || "";
+    map["draft_date"] =
+      (selectedPolicyView?.initialDraftDate != null ? String(selectedPolicyView.initialDraftDate) : "") ||
+      fromLead("draft_date") ||
+      "";
     map["first_draft"] = fromLead("first_draft");
     map["institution_name"] = fromLead("institution_name");
     map["beneficiary_routing"] = fromLead("beneficiary_routing");
@@ -784,17 +1073,14 @@ export function useAssignedLeadDetails() {
   }, [canonicalLeadRecord, lead, selectedPolicyView]);
 
   useEffect(() => {
-    if (!lead || typeof lead["id"] !== "string") {
-      setVerificationSessionId(null);
-      setVerificationItems([]);
-      setVerificationLoading(false);
-      setVerificationError(null);
-      setVerificationInputValues({});
-      return;
-    }
+    const leadIdForVerification =
+      (lead && typeof lead["id"] === "string" ? (lead["id"] as string) : null) ??
+      (personalLead && typeof personalLead["id"] === "string" ? (personalLead["id"] as string) : null);
 
-    const policyNumber = selectedPolicyView?.policyNumber;
-    if (!policyNumber || policyNumber === "—") {
+    const dealIdForVerification =
+      selectedDeal && typeof selectedDeal.id === "number" && Number.isFinite(selectedDeal.id) ? selectedDeal.id : null;
+
+    if (!leadIdForVerification && dealIdForVerification == null) {
       setVerificationSessionId(null);
       setVerificationItems([]);
       setVerificationLoading(false);
@@ -808,38 +1094,58 @@ export function useAssignedLeadDetails() {
       setVerificationLoading(true);
       setVerificationError(null);
       try {
-        const leadId = lead["id"] as string;
+        const leadId = leadIdForVerification;
 
-        const { data: sessionRow, error: sessionErr } = await supabase.rpc(
-          "retention_get_or_create_verification_session",
-          {
-            lead_id_param: leadId,
-            policy_number_param: policyNumber,
-            call_center_param: selectedPolicyView?.callCenter ?? null,
+        if (leadId && !leadId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)) {
+          throw new Error("Invalid leadId");
+        }
+        const { data: { session }, error: sessErr } = await supabase.auth.getSession();
+
+        if (sessErr) throw sessErr;
+        const token = session?.access_token;
+        if (!token) throw new Error("Not authenticated.");
+
+        const rawPolicyNumber = selectedPolicyView?.policyNumber;
+        const policyNumber = rawPolicyNumber && rawPolicyNumber !== "—" ? rawPolicyNumber : null;
+        const fallbackPolicyKey = (() => {
+          const dealId = selectedPolicyView?.raw?.id;
+          if (typeof dealId === "number" && Number.isFinite(dealId)) return `deal:${dealId}`;
+          return selectedPolicyKey ? `policy:${selectedPolicyKey}` : "policy:unknown";
+        })();
+
+        const policyKeyForSession = policyNumber ?? fallbackPolicyKey;
+
+        const resp = await fetch("/api/verification-items", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
           },
-        );
-
-        if (sessionErr) throw sessionErr;
-        const session = sessionRow as unknown as Record<string, unknown> | null;
-        const sessionId = session && typeof session["id"] === "string" ? (session["id"] as string) : null;
-        if (!sessionId) throw new Error("Failed to create or load verification session.");
-
-        const { error: initErr } = await supabase.rpc("retention_initialize_verification_items", {
-          session_id_param: sessionId,
+          body: JSON.stringify({
+            leadId: leadIdForVerification,
+            dealId: dealIdForVerification,
+            policyKey: policyKeyForSession,
+            callCenter: selectedPolicyView?.callCenter ?? null,
+            autofill: verificationAutofillByFieldName,
+          }),
         });
-        if (initErr) throw initErr;
 
-        const { data: itemsRows, error: itemsErr } = await supabase
-          .from("retention_verification_items")
-          .select("*")
-          .eq("session_id", sessionId)
-          .order("created_at", { ascending: true });
+        const json = (await resp.json().catch(() => null)) as
+          | { ok: true; sessionId: string; items: Array<Record<string, unknown>> }
+          | { ok: false; error: string }
+          | null;
 
-        if (itemsErr) throw itemsErr;
+        if (!resp.ok || !json || ("ok" in json && json.ok === false)) {
+          const errMsg = json && "error" in json ? json.error : `Failed to load verification items (status ${resp.status}).`;
+          throw new Error(errMsg);
+        }
+
+        const sessionId = (json as { ok: true; sessionId: string }).sessionId;
+        const items = (json as { ok: true; items: Array<Record<string, unknown>> }).items;
 
         if (cancelled) return;
         setVerificationSessionId(sessionId);
-        const rows = (itemsRows ?? []) as Array<Record<string, unknown>>;
+        const rows = (items ?? []) as Array<Record<string, unknown>>;
         setVerificationItems(rows);
 
         const map: Record<string, string> = {};
@@ -875,7 +1181,7 @@ export function useAssignedLeadDetails() {
     return () => {
       cancelled = true;
     };
-  }, [lead, selectedPolicyView, verificationAutofillByFieldName]);
+  }, [lead, personalLead, selectedDeal, selectedPolicyKey, selectedPolicyView, verificationAutofillByFieldName]);
 
   const toggleVerificationItem = async (itemId: string, checked: boolean) => {
     setVerificationItems((prev) =>
@@ -1043,6 +1349,7 @@ export function useAssignedLeadDetails() {
   return {
     router,
     idParam,
+    selectedDeal,
     lead,
     personalLead,
     personalLeadLoading,

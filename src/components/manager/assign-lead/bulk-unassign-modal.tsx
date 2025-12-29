@@ -1,15 +1,18 @@
+"use client"
+
 import React from "react";
 
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { Loader2 } from "lucide-react";
 
-import { DEAL_GROUPS } from "./deal-groups";
+import { getGhlStages, type GhlStageOption } from "../../../lib/retention-assignment.logic";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 
 export type BulkUnassignAgentOption = {
   id: string;
@@ -24,17 +27,13 @@ type BulkUnassignModalProps = {
 };
 
 type DealRow = {
+  id: number;
   monday_item_id: string | null;
-};
-
-type LeadRow = {
-  id: string;
-  submission_id: string | null;
 };
 
 type AssignmentRow = {
   id: string;
-  lead_id: string;
+  deal_id?: number | null;
   assignee_profile_id: string;
 };
 
@@ -54,19 +53,20 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
     toastRef.current = toast;
   }, [toast]);
 
-  const [groupTitle, setGroupTitle] = React.useState<string>("");
-  const [search, setSearch] = React.useState<string>("");
+  const [selectedStages, setSelectedStages] = React.useState<string[]>([]);
   const [agentId, setAgentId] = React.useState<string>("all");
 
   const [loading, setLoading] = React.useState(false);
   const [groupCount, setGroupCount] = React.useState<number | null>(null);
   const [assignedRows, setAssignedRows] = React.useState<AssignmentRow[]>([]);
 
+  const [stages, setStages] = React.useState<GhlStageOption[]>([]);
+  const [loadingStages, setLoadingStages] = React.useState(false);
+
   const [deleting, setDeleting] = React.useState(false);
 
   const reset = React.useCallback(() => {
-    setGroupTitle("");
-    setSearch("");
+    setSelectedStages([]);
     setAgentId("all");
     setGroupCount(null);
     setAssignedRows([]);
@@ -78,8 +78,26 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
     if (!open) reset();
   }, [open, reset]);
 
+  React.useEffect(() => {
+    if (!open) return;
+
+    const loadStages = async () => {
+      setLoadingStages(true);
+      try {
+        const data = await getGhlStages();
+        setStages(data);
+      } catch (e) {
+        console.error("[bulk-unassign] load stages error", e);
+      } finally {
+        setLoadingStages(false);
+      }
+    };
+
+    void loadStages();
+  }, [open]);
+
   const loadAssigned = React.useCallback(async () => {
-    if (!groupTitle) {
+    if (!selectedStages || selectedStages.length === 0) {
       setGroupCount(null);
       setAssignedRows([]);
       return;
@@ -87,21 +105,12 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
 
     setLoading(true);
     try {
-      const trimmed = search.trim();
-
-      let dealsQuery = supabase
+      const dealsQuery = supabase
         .from("monday_com_deals")
-        .select("monday_item_id", { count: "exact" })
-        .eq("group_title", groupTitle)
+        .select("id,monday_item_id", { count: "exact" })
+        .in("ghl_stage", selectedStages)
         .not("monday_item_id", "is", null)
         .order("last_updated", { ascending: false, nullsFirst: false });
-
-      if (trimmed) {
-        const escaped = trimmed.replace(/,/g, "");
-        dealsQuery = dealsQuery.or(
-          `ghl_name.ilike.%${escaped}%,deal_name.ilike.%${escaped}%,phone_number.ilike.%${escaped}%,monday_item_id.ilike.%${escaped}%`,
-        );
-      }
 
       const { data: dealRows, error: dealsError, count } = await dealsQuery.limit(2000);
       if (dealsError) throw dealsError;
@@ -120,31 +129,17 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
         return;
       }
 
-      const { data: leadRows, error: leadsError } = await supabase
-        .from("leads")
-        .select("id, submission_id")
-        .in("submission_id", submissionIds)
-        .limit(10000);
+      const dealIds = Array.from(new Set(((dealRows ?? []) as DealRow[]).map((d) => d.id).filter((v): v is number => !!v)));
 
-      if (leadsError) throw leadsError;
-
-      const leadIds = Array.from(
-        new Set(
-          ((leadRows ?? []) as LeadRow[])
-            .map((l) => (l.id as string) ?? "")
-            .filter((v) => typeof v === "string" && v.length > 0),
-        ),
-      );
-
-      if (leadIds.length === 0) {
+      if (dealIds.length === 0) {
         setAssignedRows([]);
         return;
       }
 
       let assignmentsQuery = supabase
         .from("retention_assigned_leads")
-        .select("id, lead_id, assignee_profile_id")
-        .in("lead_id", leadIds)
+        .select("id, deal_id, assignee_profile_id")
+        .in("deal_id", dealIds)
         .eq("status", "active")
         .limit(10000);
 
@@ -160,7 +155,7 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
       console.error("[bulk-unassign] loadAssigned error", e);
       toastRef.current({
         title: "Failed to load",
-        description: "Could not load assigned leads for this group.",
+        description: "Could not load assigned leads for the selected GHL stage(s).",
         variant: "destructive",
       });
       setGroupCount(null);
@@ -168,14 +163,14 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
     } finally {
       setLoading(false);
     }
-  }, [agentId, groupTitle, search]);
+  }, [agentId, selectedStages]);
 
   React.useEffect(() => {
     if (!open) return;
     void loadAssigned();
-  }, [open, loadAssigned]);
+  }, [open, selectedStages, agentId, loadAssigned]);
 
-  const canUnassign = !!groupTitle && assignedRows.length > 0 && !loading && !deleting;
+  const canUnassign = selectedStages.length > 0 && assignedRows.length > 0 && !loading && !deleting;
 
   const bulkUnassign = async () => {
     if (!canUnassign) return;
@@ -217,19 +212,52 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
         <div className="space-y-5 py-2">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="space-y-2">
-              <div className="text-sm font-medium">Group Category</div>
-              <Select value={groupTitle} onValueChange={setGroupTitle}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a group" />
-                </SelectTrigger>
-                <SelectContent>
-                  {DEAL_GROUPS.map((g) => (
-                    <SelectItem key={g.id} value={g.title}>
-                      {g.title}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="text-sm font-medium">GHL Stage(s)</div>
+              <div>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" className="w-full text-left" disabled={loadingStages}>
+                      {selectedStages.length > 0 ? `${selectedStages.length} selected` : "Select stage(s)"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-72">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-sm font-medium">Stages</div>
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="ghost" onClick={() => setSelectedStages(stages.map((s) => s.stage))}>
+                          Select all
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setSelectedStages([])}>
+                          Clear
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="max-h-64 overflow-auto">
+                      {loadingStages ? (
+                        <div className="flex items-center justify-center p-4">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        </div>
+                      ) : (
+                        stages.map((s) => (
+                          <label key={s.stage} className="flex items-center justify-between p-2">
+                            <div className="flex items-center gap-2">
+                              <Checkbox
+                                checked={selectedStages.includes(s.stage)}
+                                onCheckedChange={(c) => {
+                                  const checked = !!c;
+                                  setSelectedStages((prev) => (checked ? [...prev, s.stage] : prev.filter((x) => x !== s.stage)));
+                                }}
+                              />
+                              <div>{s.stage}</div>
+                            </div>
+                            <div className="text-xs text-muted-foreground">{s.count}</div>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -249,15 +277,7 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
               </Select>
             </div>
 
-            <div className="space-y-2">
-              <div className="text-sm font-medium">Search within group (optional)</div>
-              <Input
-                placeholder="Search name, phone, submission ID..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                disabled={!groupTitle}
-              />
-            </div>
+
           </div>
 
           <div className="rounded-md border bg-muted/10 p-3">
@@ -269,18 +289,22 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
                     <span className="inline-flex items-center">
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading...
                     </span>
-                  ) : groupTitle ? (
+                  ) : selectedStages.length > 0 ? (
                     <>
-                      Total leads in this group: <span className="font-medium">{groupCount ?? "—"}</span>
+                      Total leads in this stage: <span className="font-medium">{groupCount ?? "—"}</span>
                       <span className="mx-2">•</span>
                       Assigned (matching filter): <span className="font-medium">{assignedRows.length}</span>
                     </>
                   ) : (
-                    "Select a group to load assigned leads."
+                    "Select a GHL stage to load assigned leads."
                   )}
                 </div>
               </div>
-              <Button variant="outline" onClick={loadAssigned} disabled={!groupTitle || loading || deleting}>
+              <Button
+                variant="outline"
+                onClick={loadAssigned}
+                disabled={selectedStages.length === 0 || loading || deleting}
+              >
                 {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Reload
               </Button>
