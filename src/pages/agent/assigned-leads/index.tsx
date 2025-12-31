@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase";
-import { Loader2, EyeIcon } from "lucide-react";
+import { Loader2, EyeIcon, ChevronDown, ChevronRight } from "lucide-react";
 
 type AssignedLeadRow = {
   id: string;
@@ -66,6 +66,7 @@ export default function AssignedLeadsPage() {
   const [assignedLeads, setAssignedLeads] = useState<AssignedLeadRow[]>([]);
   const [page, setPage] = useState(1);
   const [totalCount, setTotalCount] = useState<number | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   const PAGE_SIZE = 25;
 
@@ -233,6 +234,37 @@ export default function AssignedLeadsPage() {
     );
   }, [assignedLeads, search]);
 
+  const groupedLeads = useMemo(() => {
+    const groups = new Map<string, AssignedLeadRow[]>();
+    
+    for (const lead of filteredLeads) {
+      const ghlName = (lead.lead?.customer_full_name ?? lead.deal?.ghl_name ?? lead.deal?.deal_name ?? "Unknown").trim().toLowerCase();
+      
+      if (!groups.has(ghlName)) {
+        groups.set(ghlName, []);
+      }
+      groups.get(ghlName)!.push(lead);
+    }
+    
+    return Array.from(groups.entries()).map(([name, leads]) => ({
+      name,
+      leads,
+      isDuplicate: leads.length > 1,
+    }));
+  }, [filteredLeads]);
+
+  const toggleGroup = useCallback((groupName: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupName)) {
+        next.delete(groupName);
+      } else {
+        next.add(groupName);
+      }
+      return next;
+    });
+  }, []);
+
   return (
     <div className="w-full px-8 py-10 min-h-screen bg-muted/20">
       <div className="w-full">
@@ -282,46 +314,118 @@ export default function AssignedLeadsPage() {
               ) : filteredLeads.length === 0 ? (
                 <div className="p-6 text-sm text-muted-foreground">No leads found.</div>
               ) : (
-                filteredLeads.map((row) => {
-                  const ghlName = row.lead?.customer_full_name ?? row.deal?.ghl_name ?? row.deal?.deal_name ?? "Unknown";
-                  const viewHref = `/agent/assigned-lead-details?dealId=${encodeURIComponent(String(row.deal_id ?? ""))}`;
-
+                groupedLeads.map((group) => {
+                  const isExpanded = expandedGroups.has(group.name);
+                  const primaryLead = group.leads[0];
+                  const ghlName = primaryLead.lead?.customer_full_name ?? primaryLead.deal?.ghl_name ?? primaryLead.deal?.deal_name ?? "Unknown";
+                  
                   return (
-                    <div key={row.id} className="grid grid-cols-7 gap-3 p-3 text-sm items-center border-t">
-                      <div className="truncate" title={ghlName}>
-                        {ghlName}
+                    <React.Fragment key={group.name}>
+                      <div className="grid grid-cols-7 gap-3 p-3 text-sm items-center border-t">
+                        <div className="flex items-center gap-2">
+                          {group.isDuplicate ? (
+                            <button
+                              type="button"
+                              onClick={() => toggleGroup(group.name)}
+                              className="shrink-0 hover:bg-muted rounded p-0.5"
+                            >
+                              {isExpanded ? (
+                                <ChevronDown className="size-4 text-muted-foreground" />
+                              ) : (
+                                <ChevronRight className="size-4 text-muted-foreground" />
+                              )}
+                            </button>
+                          ) : (
+                            <div className="w-5" />
+                          )}
+                          <div className="truncate" title={ghlName}>
+                            {ghlName}
+                            {group.isDuplicate ? (
+                              <span className="ml-2 text-xs text-muted-foreground">({group.leads.length})</span>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="truncate" title={(primaryLead.lead?.carrier ?? primaryLead.deal?.carrier) ?? undefined}>
+                          {primaryLead.lead?.carrier ?? primaryLead.deal?.carrier ?? "-"}
+                        </div>
+                        <div className="truncate" title={(primaryLead.lead?.product_type ?? primaryLead.deal?.policy_type) ?? undefined}>
+                          {primaryLead.lead?.product_type ?? primaryLead.deal?.policy_type ?? "-"}
+                        </div>
+                        <div className="truncate" title={(primaryLead.lead?.phone_number ?? primaryLead.deal?.phone_number) ?? undefined}>
+                          {primaryLead.lead?.phone_number ?? primaryLead.deal?.phone_number ?? "-"}
+                        </div>
+                        <div className="truncate" title={(primaryLead.lead?.lead_vendor ?? primaryLead.deal?.call_center) ?? undefined}>
+                          {primaryLead.lead?.lead_vendor ?? primaryLead.deal?.call_center ?? "-"}
+                        </div>
+                        <div className="truncate text-xs text-muted-foreground">
+                          {primaryLead.lead?.created_at
+                            ? new Date(primaryLead.lead.created_at).toLocaleDateString()
+                            : new Date(primaryLead.assigned_at).toLocaleDateString()}
+                        </div>
+                        <div className="flex flex-col items-end justify-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-1"
+                            onClick={() => {
+                              const viewHref = `/agent/assigned-lead-details?dealId=${encodeURIComponent(String(primaryLead.deal_id ?? ""))}`;
+                              void router.push(viewHref);
+                            }}
+                          >
+                            <EyeIcon className="size-4" />
+                            View
+                          </Button>
+                        </div>
                       </div>
-                      <div className="truncate" title={(row.lead?.carrier ?? row.deal?.carrier) ?? undefined}>
-                        {row.lead?.carrier ?? row.deal?.carrier ?? "-"}
-                      </div>
-                      <div className="truncate" title={(row.lead?.product_type ?? row.deal?.policy_type) ?? undefined}>
-                        {row.lead?.product_type ?? row.deal?.policy_type ?? "-"}
-                      </div>
-                      <div className="truncate" title={(row.lead?.phone_number ?? row.deal?.phone_number) ?? undefined}>
-                        {row.lead?.phone_number ?? row.deal?.phone_number ?? "-"}
-                      </div>
-                      <div className="truncate" title={(row.lead?.lead_vendor ?? row.deal?.call_center) ?? undefined}>
-                        {row.lead?.lead_vendor ?? row.deal?.call_center ?? "-"}
-                      </div>
-                      <div className="truncate text-xs text-muted-foreground">
-                        {row.lead?.created_at
-                          ? new Date(row.lead.created_at).toLocaleDateString()
-                          : new Date(row.assigned_at).toLocaleDateString()}
-                      </div>
-                      <div className="flex flex-col items-end justify-center gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="gap-1"
-                          onClick={() => {
-                            void router.push(viewHref);
-                          }}
-                        >
-                          <EyeIcon className="size-4" />
-                          View
-                        </Button>
-                      </div>
-                    </div>
+                      
+                      {group.isDuplicate && isExpanded ? (
+                        group.leads.slice(1).map((row) => {
+                          const duplicateGhlName = row.lead?.customer_full_name ?? row.deal?.ghl_name ?? row.deal?.deal_name ?? "Unknown";
+                          const viewHref = `/agent/assigned-lead-details?dealId=${encodeURIComponent(String(row.deal_id ?? ""))}`;
+                          
+                          return (
+                            <div key={row.id} className="grid grid-cols-7 gap-3 p-3 text-sm items-center border-t bg-muted/30">
+                              <div className="flex items-center gap-2">
+                                <div className="w-5" />
+                                <div className="truncate" title={duplicateGhlName}>
+                                  {duplicateGhlName}
+                                </div>
+                              </div>
+                              <div className="truncate" title={(row.lead?.carrier ?? row.deal?.carrier) ?? undefined}>
+                                {row.lead?.carrier ?? row.deal?.carrier ?? "-"}
+                              </div>
+                              <div className="truncate" title={(row.lead?.product_type ?? row.deal?.policy_type) ?? undefined}>
+                                {row.lead?.product_type ?? row.deal?.policy_type ?? "-"}
+                              </div>
+                              <div className="truncate" title={(row.lead?.phone_number ?? row.deal?.phone_number) ?? undefined}>
+                                {row.lead?.phone_number ?? row.deal?.phone_number ?? "-"}
+                              </div>
+                              <div className="truncate" title={(row.lead?.lead_vendor ?? row.deal?.call_center) ?? undefined}>
+                                {row.lead?.lead_vendor ?? row.deal?.call_center ?? "-"}
+                              </div>
+                              <div className="truncate text-xs text-muted-foreground">
+                                {row.lead?.created_at
+                                  ? new Date(row.lead.created_at).toLocaleDateString()
+                                  : new Date(row.assigned_at).toLocaleDateString()}
+                              </div>
+                              <div className="flex flex-col items-end justify-center gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="gap-1"
+                                  onClick={() => {
+                                    void router.push(viewHref);
+                                  }}
+                                >
+                                  <EyeIcon className="size-4" />
+                                  View
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      ) : null}
+                    </React.Fragment>
                   );
                 })
               )}

@@ -17,25 +17,25 @@ const GROUPS: DealGroup[] = [
   {
     id: "failed_payment",
     title: "Failed Payment",
-    color: "#bb3354",
+    color: "#B91C1C",
     queryStages: CATEGORY_TO_GHL_STAGES["Failed Payment"],
   },
   {
     id: "pending_lapse",
     title: "Pending Lapse",
-    color: "#ffcb00",
+    color: "#B45309",
     queryStages: CATEGORY_TO_GHL_STAGES["Pending Lapse"],
   },
   {
     id: "pending_manual_action",
     title: "Pending Manual Action",
-    color: "#fdab3d",
+    color: "#1D4ED8",
     queryStages: CATEGORY_TO_GHL_STAGES["Pending Manual Action"],
   },
   {
     id: "chargeback",
     title: "Chargeback",
-    color: "#bb3354",
+    color: "#BE123C",
     queryStages: CATEGORY_TO_GHL_STAGES["Chargeback"],
   },
 ];

@@ -128,8 +128,12 @@ export default function RetentionWorkflowPage() {
     () => ({
       dob: strFromQuery(router.query.dob) ?? "",
       ghlStage: strFromQuery(router.query.ghlStage) ?? "",
+      agentName: strFromQuery(router.query.agentName) ?? "",
+      writingNumber: strFromQuery(router.query.writingNumber) ?? "",
+      ssnLast4: strFromQuery(router.query.ssnLast4) ?? "",
+      address: strFromQuery(router.query.address) ?? "",
     }),
-    [router.query.dob, router.query.ghlStage],
+    [router.query.dob, router.query.ghlStage, router.query.agentName, router.query.writingNumber, router.query.ssnLast4, router.query.address],
   );
 
   const [step, setStep] = React.useState<WorkflowStep>("setup");
@@ -627,6 +631,10 @@ export default function RetentionWorkflowPage() {
   const leadVendor = (getString(lead, "lead_vendor") ?? callCenter ?? "N/A").trim();
   const leadDob = ((leadInfoFromRoute.dob || getString(lead, "date_of_birth") || "N/A") as string).trim();
   const leadGhlStage = ((leadInfoFromRoute.ghlStage || getString(lead, "ghl_stage") || "N/A") as string).trim();
+  const leadAgentName = ((leadInfoFromRoute.agentName || getString(lead, "agent") || "N/A") as string).trim();
+  const leadWritingNumber = ((leadInfoFromRoute.writingNumber || "") as string).trim();
+  const leadSsnLast4 = ((leadInfoFromRoute.ssnLast4 || "") as string).trim();
+  const leadAddress = ((leadInfoFromRoute.address || getString(lead, "street_address") || "N/A") as string).trim();
   const bankingRouting = ((bankingFromRoute.routingNumber || getString(lead, "beneficiary_routing") || "N/A") as string).trim();
   const bankingAccount = ((bankingFromRoute.accountNumber || getString(lead, "beneficiary_account") || "N/A") as string).trim();
   const bankingInstitution = ((bankingFromRoute.bankName || getString(lead, "beneficiary_bank_name") || "") as string).trim();
@@ -1037,7 +1045,6 @@ export default function RetentionWorkflowPage() {
                       <Badge variant="secondary">{retentionType}</Badge>
                     ) : null}
                   </div>
-                  <CardDescription>Follow the instructions below, then complete the call result.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
               {isMOH && retentionType === "fixed_payment" ? (
@@ -1117,17 +1124,17 @@ export default function RetentionWorkflowPage() {
               ) : null}
 
               {instructions.kind === "call" ? (
-                <div className="rounded-md border bg-background p-4 space-y-4">
-                  <div className="text-sm font-medium">Call Instructions</div>
-                  <div className="text-sm text-muted-foreground">
-                    Call <span className="font-semibold text-foreground">{instructions.phone}</span>
+                <div className="rounded-md border bg-blue-50 p-4 space-y-4">
+                  <div className="text-sm font-medium text-blue-900">Call Instructions</div>
+                  <div className="text-sm text-blue-800">
+                    Call <span className="font-semibold text-blue-900">{instructions.phone}</span>
                   </div>
                   {instructions.optionsInstruction ? (
-                    <div className="text-sm text-muted-foreground">{instructions.optionsInstruction}</div>
+                    <div className="text-sm text-blue-800">{instructions.optionsInstruction}</div>
                   ) : null}
                   <div>
-                    <div className="text-sm text-muted-foreground">When connected, say:</div>
-                    <div className="mt-2 rounded-md border bg-muted/30 p-3 text-sm">
+                    <div className="text-sm text-blue-800">When connected, say:</div>
+                    <div className="mt-2 rounded-md border border-blue-200 bg-white p-3 text-sm text-blue-900">
                       &quot;{instructions.script}&quot;
                     </div>
                   </div>
@@ -1139,22 +1146,45 @@ export default function RetentionWorkflowPage() {
                 </div>
               )}
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-md border bg-background p-3">
-                  <div className="text-xs text-muted-foreground">Client</div>
-                  <div className="text-sm font-semibold">{deal.clientName || "—"}</div>
-                </div>
-                <div className="rounded-md border bg-background p-3">
-                  <div className="text-xs text-muted-foreground">Policy #</div>
-                  <div className="text-sm font-semibold">{policyNumber || "—"}</div>
-                </div>
-                <div className="rounded-md border bg-background p-3">
-                  <div className="text-xs text-muted-foreground">Carrier</div>
-                  <div className="text-sm font-semibold">{deal.carrier || "—"}</div>
-                </div>
-                <div className="rounded-md border bg-background p-3">
-                  <div className="text-xs text-muted-foreground">Call Center</div>
-                  <div className="text-sm font-semibold">{callCenter || "—"}</div>
+              <div className="rounded-md border bg-background p-4">
+                <div className="text-sm font-medium mb-3">Policy Information</div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="text-xs text-muted-foreground">Client Name</div>
+                    <div className="text-sm font-semibold">{deal.clientName || "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Policy Number</div>
+                    <div className="text-sm font-semibold">{policyNumber || "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Agent Name</div>
+                    <div className="text-sm font-semibold">{leadAgentName || "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Agent Writing Number</div>
+                    <div className="text-sm font-semibold">{leadWritingNumber || "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Last 4 Agent SSN</div>
+                    <div className="text-sm font-semibold">{leadSsnLast4 || "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Date of Birth</div>
+                    <div className="text-sm font-semibold">{leadDob || "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Carrier</div>
+                    <div className="text-sm font-semibold">{deal.carrier || "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Call Center</div>
+                    <div className="text-sm font-semibold">{callCenter || "—"}</div>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <div className="text-xs text-muted-foreground">Address</div>
+                    <div className="text-sm font-semibold">{leadAddress || "—"}</div>
+                  </div>
                 </div>
               </div>
 

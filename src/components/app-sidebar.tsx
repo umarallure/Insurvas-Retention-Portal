@@ -1,6 +1,6 @@
 "use client";
 
-import * as React from "react";
+import {useEffect,useState} from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/router";
@@ -47,21 +47,27 @@ export function AppSidebar() {
   const onManager = path === "/manager" || path.startsWith("/manager/");
   const onSettings = path === "/settings" || path.startsWith("/settings/");
 
-  const [agentOpen, setAgentOpen] = React.useState(() => onAgent);
-  const [managerOpen, setManagerOpen] = React.useState(() => onManager);
-  const [settingsOpen, setSettingsOpen] = React.useState(() => onSettings);
+  const [agentOpen, setAgentOpen] =  useState(() => onAgent);
+  const [managerOpen, setManagerOpen] = useState(() => onManager);
+  const [settingsOpen, setSettingsOpen] = useState(() => onSettings);
 
-  React.useEffect(() => {
-    if (onAgent) {
-      setAgentOpen(true);
-    }
-    if (onManager) {
-      setManagerOpen(true);
-    }
-    if (onSettings) {
-      setSettingsOpen(true);
-    }
-  }, [onAgent, onManager, onSettings]);
+  useEffect(() => {
+    const handleRouteChange = (url: string) => {
+      const nextPath = url.split("?")[0];
+      if (nextPath === "/agent" || nextPath.startsWith("/agent/")) {
+        setAgentOpen(true);
+      }
+      if (nextPath === "/manager" || nextPath.startsWith("/manager/")) {
+        setManagerOpen(true);
+      }
+      if (nextPath === "/settings" || nextPath.startsWith("/settings/")) {
+        setSettingsOpen(true);
+      }
+    };
+
+    router.events.on("routeChangeComplete", handleRouteChange);
+    return () => router.events.off("routeChangeComplete", handleRouteChange);
+  }, [router]);
 
   return (
     <Sidebar collapsible="icon" variant="sidebar" className="bg-sidebar/70">

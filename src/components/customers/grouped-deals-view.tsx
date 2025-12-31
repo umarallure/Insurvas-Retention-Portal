@@ -16,27 +16,27 @@ const GROUPS: DealGroup[] = [
     title: "Failed Payment",
     queryTitleIlike: ["%FDPF%", "%Failed Payment%"],
     excludeStageIlike: ["%Chargeback%", "%Charged Back%"],
-    color: "#bb3354",
+    color: "#B91C1C",
   },
   {
     id: "pending_lapse",
     title: "Pending Lapse",
     queryStageIlike: ["%Pending Lapse%"],
-    color: "#ffcb00",
+    color: "#B45309",
   },
   {
     id: "pending_manual_action",
     title: "Pending Manual Action",
     queryTitleIlike: ["%Pending Manual Action%", "%Manual Action%"],
     queryStageIlike: ["%Pending Manual Action%", "%Manual Action%"],
-    color: "#fdab3d",
+    color: "#1D4ED8",
   },
   {
     id: "chargeback",
     title: "Chargeback",
     queryTitleIlike: ["%Charged Back%", "%Chargeback%"],
     queryStageIlike: ["%Chargeback%", "%Charged Back%"],
-    color: "#bb3354",
+    color: "#BE123C",
   },
 ];
 

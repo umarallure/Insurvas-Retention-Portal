@@ -418,11 +418,47 @@ export function useAssignedLeadDetails() {
 
         if (assignedError) throw assignedError;
 
-        const ids = (rows ?? [])
+        const dealIds = (rows ?? [])
           .map((r) => (typeof r?.deal_id === "number" ? (r.deal_id as number) : null))
           .filter((v): v is number => v != null);
 
-        if (!cancelled) setAssignedDealIds(ids);
+        // Fetch all deals to group by GHL name
+        if (dealIds.length > 0) {
+          const { data: dealRows, error: dealsError } = await supabase
+            .from("monday_com_deals")
+            .select("id, ghl_name, deal_name")
+            .in("id", dealIds)
+            .limit(5000);
+
+          if (dealsError) throw dealsError;
+
+          const dealMap = new Map<number, { ghlName: string }>();
+          for (const deal of (dealRows ?? []) as Array<{ id: number; ghl_name: string | null; deal_name: string | null }>) {
+            const ghlName = (deal.ghl_name ?? deal.deal_name ?? "").trim().toLowerCase();
+            dealMap.set(deal.id, { ghlName });
+          }
+
+          // Filter to unique GHL names, keeping first occurrence of each
+          const seenNames = new Set<string>();
+          const uniqueDealIds: number[] = [];
+
+          for (const id of dealIds) {
+            const dealInfo = dealMap.get(id);
+            if (!dealInfo) {
+              uniqueDealIds.push(id);
+              continue;
+            }
+
+            if (!seenNames.has(dealInfo.ghlName)) {
+              seenNames.add(dealInfo.ghlName);
+              uniqueDealIds.push(id);
+            }
+          }
+
+          if (!cancelled) setAssignedDealIds(uniqueDealIds);
+        } else {
+          if (!cancelled) setAssignedDealIds([]);
+        }
       } catch (e) {
         console.error("[assigned-lead-details] load assigned deal ids error", e);
         if (!cancelled) setAssignedDealIds([]);

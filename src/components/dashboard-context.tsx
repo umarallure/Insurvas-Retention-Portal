@@ -1,6 +1,6 @@
 "use client";
 
-import * as React from "react";
+import {createContext,useEffect,useState,ReactNode,useContext,useMemo} from "react";
 import { useRouter } from "next/router";
 import { toast } from "sonner";
 
@@ -17,7 +17,7 @@ type DashboardContextValue = {
   setDialerOpen: (open: boolean) => void;
 };
 
-const DashboardContext = React.createContext<DashboardContextValue | null>(null);
+const DashboardContext = createContext<DashboardContextValue | null>(null);
 
 function isEditableElement(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -30,20 +30,20 @@ function isEditableElement(target: EventTarget | null): boolean {
   );
 }
 
-export function DashboardProvider({ children }: { children: React.ReactNode }) {
+export function DashboardProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const [isCommandOpen, setIsCommandOpen] = React.useState(false);
-  const [isNotificationsOpen, setIsNotificationsOpen] = React.useState(false);
-  const [currentLeadPhone, setCurrentLeadPhone] = React.useState<string | null>(null);
-  const [dialerOpen, setDialerOpen] = React.useState(false);
+  const [isCommandOpen, setIsCommandOpen] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [currentLeadPhone, setCurrentLeadPhone] = useState<string | null>(null);
+  const [dialerOpen, setDialerOpen] = useState(false);
 
-  // Match Vue: close notifications on route change.
-  React.useEffect(() => {
-    setIsNotificationsOpen(false);
-  }, [router.asPath]);
+  useEffect(() => {
+    const handleRouteChange = () => setIsNotificationsOpen(false);
+    router.events.on("routeChangeStart", handleRouteChange);
+    return () => router.events.off("routeChangeStart", handleRouteChange);
+  }, [router]);
 
-  // Cookie consent toast (Vue uses local storage via useStorage).
-  React.useEffect(() => {
+  useEffect(() => {
     if (typeof window === "undefined") return;
 
     const key = "cookie-consent";
@@ -81,8 +81,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Keyboard shortcuts: g-h/g-i/g-c/g-s and n.
-  React.useEffect(() => {
+  useEffect(() => {
     let awaitingGoto = false;
     let gotoTimer: number | undefined;
 
@@ -96,7 +95,6 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       if (e.defaultPrevented) return;
       if (isEditableElement(e.target)) return;
 
-      // Toggle notifications (Vue: 'n')
       if (!awaitingGoto && e.key.toLowerCase() === "n") {
         e.preventDefault();
         setIsNotificationsOpen((v) => !v);
@@ -152,7 +150,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     };
   }, [router, setIsCommandOpen]);
 
-  const value = React.useMemo<DashboardContextValue>(
+  const value = useMemo<DashboardContextValue>(
     () => ({
       isCommandOpen,
       setIsCommandOpen,
@@ -170,7 +168,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
 }
 
 export function useDashboard() {
-  const ctx = React.useContext(DashboardContext);
+  const ctx = useContext(DashboardContext);
   if (!ctx) throw new Error("useDashboard must be used within DashboardProvider");
   return ctx;
 }

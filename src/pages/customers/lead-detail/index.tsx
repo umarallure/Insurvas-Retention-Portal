@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { useDashboard } from "@/components/dashboard-context";
 
 type LeadRecord = Record<string, unknown>;
 
@@ -85,6 +86,7 @@ function FieldDate({ label, value }: { label: string; value: unknown }) {
 
 export default function LeadDetailPage() {
   const router = useRouter();
+  const { setCurrentLeadPhone } = useDashboard();
 
   const idParam = router.query.id;
 
@@ -166,6 +168,18 @@ export default function LeadDetailPage() {
     e.sort(([a], [b]) => a.localeCompare(b));
     return e;
   }, [lead]);
+
+  React.useEffect(() => {
+    const raw = getString(lead, "phone_number");
+    const phone = raw && raw !== "-" ? raw : null;
+    setCurrentLeadPhone(phone);
+  }, [lead, setCurrentLeadPhone]);
+
+  React.useEffect(() => {
+    return () => {
+      setCurrentLeadPhone(null);
+    };
+  }, [setCurrentLeadPhone]);
 
   const title = React.useMemo(() => {
     if (!lead) return null;

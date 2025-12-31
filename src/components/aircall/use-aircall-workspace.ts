@@ -1,6 +1,6 @@
 "use client";
 
-import * as React from "react";
+import {useCallback,useEffect,useState,useRef} from "react";
 
 type SendCallback = (success: boolean, data?: unknown) => void;
 
@@ -27,13 +27,13 @@ export function useAircallWorkspace({
   enabled: boolean;
   containerId: string;
 }) {
-  const [ready, setReady] = React.useState(false);
-  const [loggedIn, setLoggedIn] = React.useState(false);
-  const [lastError, setLastError] = React.useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [lastError, setLastError] = useState<string | null>(null);
 
-  const instanceRef = React.useRef<AircallWorkspaceInstance | null>(null);
+  const instanceRef = useRef<AircallWorkspaceInstance | null>(null);
 
-  React.useEffect(() => {
+  useEffect(() => {
     let cancelled = false;
 
     const init = async () => {
@@ -83,7 +83,7 @@ export function useAircallWorkspace({
     };
   }, [containerId, enabled]);
 
-  const dialNumber = React.useCallback((phoneNumber: string) => {
+  const dialNumber = useCallback((phoneNumber: string) => {
     const inst = instanceRef.current;
     if (!inst) {
       setLastError("Aircall workspace not ready");
@@ -110,7 +110,7 @@ export function useAircallWorkspace({
     );
   }, []);
 
-  const autoDialNumber = React.useCallback((phoneNumber: string) => {
+  const autoDialNumber = useCallback((phoneNumber: string) => {
     const inst = instanceRef.current;
     if (!inst) {
       setLastError("Aircall workspace not ready");

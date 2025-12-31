@@ -80,6 +80,12 @@ export default function AssignedLeadDetailsPage() {
     setCurrentLeadPhone(phone);
   }, [personalPhone, setCurrentLeadPhone]);
 
+  React.useEffect(() => {
+    return () => {
+      setCurrentLeadPhone(null);
+    };
+  }, [setCurrentLeadPhone]);
+
   return (
     <div className="w-full px-6 py-8 min-h-screen bg-muted/20">
       <div className="w-full">
@@ -258,6 +264,11 @@ export default function AssignedLeadDetailsPage() {
                                         const dealIdForRoute = raw && typeof raw["id"] === "number" ? (raw["id"] as number) : null;
                                         const dobForRoute = personalDob !== "-" ? personalDob : "";
                                         const ghlStageForRoute = selectedDeal?.ghl_stage ?? "";
+                                        const agentNameForRoute = p.agentName && p.agentName !== "—" ? p.agentName : "";
+                                        const writingNumberForRoute = raw && typeof raw["writing_no"] === "string" ? (raw["writing_no"] as string) : "";
+                                        const ssnLast4Raw = personalSsnLast4 !== "-" ? personalSsnLast4 : "";
+                                        const ssnLast4ForRoute = ssnLast4Raw.length > 4 ? ssnLast4Raw.slice(-4) : ssnLast4Raw;
+                                        const addressForRoute = personalAddress1 !== "-" ? personalAddress1 : "";
 
                                         const banking = (() => {
                                           const fields: Record<string, string> = {};
@@ -299,6 +310,10 @@ export default function AssignedLeadDetailsPage() {
                                             `&phoneNumber=${encodeURIComponent(String(phoneNumberForRoute ?? ""))}` +
                                             `&dob=${encodeURIComponent(String(dobForRoute))}` +
                                             `&ghlStage=${encodeURIComponent(String(ghlStageForRoute))}` +
+                                            `&agentName=${encodeURIComponent(String(agentNameForRoute))}` +
+                                            `&writingNumber=${encodeURIComponent(String(writingNumberForRoute))}` +
+                                            `&ssnLast4=${encodeURIComponent(String(ssnLast4ForRoute))}` +
+                                            `&address=${encodeURIComponent(String(addressForRoute))}` +
                                             `&bankName=${encodeURIComponent(banking.institutionName)}` +
                                             `&routingNumber=${encodeURIComponent(banking.beneficiaryRouting)}` +
                                             `&accountNumber=${encodeURIComponent(banking.beneficiaryAccount)}` +
