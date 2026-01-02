@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/router";
 
 import { supabase } from "@/lib/supabase";
@@ -14,6 +14,27 @@ export type LeadRecord = Record<string, unknown>;
 
 export function normalizePhoneDigits(phone: string) {
   return phone.replace(/\D/g, "");
+}
+
+export function normalizeName(value: string | null | undefined) {
+  if (!value) return "";
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function getNameSignature(value: string | null | undefined) {
+  const normalized = normalizeName(value);
+  if (!normalized) return "";
+  const parts = normalized.split(" ").filter(Boolean);
+  if (parts.length === 0) return "";
+  const first = parts[0] ?? "";
+  const last = parts.length > 1 ? parts[parts.length - 1] : parts[0] ?? "";
+  const firstKey = first.slice(0, 3);
+  const lastKey = last.slice(0, 3);
+  return `${firstKey}|${lastKey}`;
 }
 
 export function buildDigitWildcardPattern(digits: string) {
@@ -231,6 +252,7 @@ export function useAssignedLeadDetails() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedPolicyKey, setSelectedPolicyKey] = useState<string | null>(null);
+  const hasAutoSelectedRef = useRef(false);
 
   const [verificationSessionId, setVerificationSessionId] = useState<string | null>(null);
   const [verificationItems, setVerificationItems] = useState<Array<Record<string, unknown>>>([]);
@@ -239,6 +261,7 @@ export function useAssignedLeadDetails() {
   const [verificationInputValues, setVerificationInputValues] = useState<Record<string, string>>({});
 
   const [assignedDealIds, setAssignedDealIds] = useState<number[]>([]);
+  const [navDealIdToPrimaryDealId, setNavDealIdToPrimaryDealId] = useState<Record<string, number>>({});
   const [assignedDealsLoading, setAssignedDealsLoading] = useState(false);
 
 
@@ -375,6 +398,7 @@ export function useAssignedLeadDetails() {
     if (!router.isReady) return;
     if (!dealId) {
       setAssignedDealIds([]);
+      setNavDealIdToPrimaryDealId({});
       setAssignedDealsLoading(false);
       return;
     }
@@ -382,8 +406,40 @@ export function useAssignedLeadDetails() {
     let cancelled = false;
 
     const loadAssignedDealsForAgent = async () => {
-      setAssignedDealsLoading(true);
       try {
+        let hasNavigationSeed = false;
+        try {
+          const raw = sessionStorage.getItem("assignedLeadsNavigationContext");
+          if (raw) {
+            const parsed = JSON.parse(raw) as {
+              dealIds?: unknown;
+              dealIdToPrimaryDealId?: unknown;
+            };
+            const dealIdsFromStorage = Array.isArray(parsed?.dealIds)
+              ? (parsed.dealIds as unknown[]).filter((v): v is number => typeof v === "number" && Number.isFinite(v))
+              : [];
+            const mapFromStorage =
+              parsed?.dealIdToPrimaryDealId && typeof parsed.dealIdToPrimaryDealId === "object"
+                ? (parsed.dealIdToPrimaryDealId as Record<string, number>)
+                : {};
+
+            if (dealIdsFromStorage.length > 0) {
+              if (!cancelled) {
+                setAssignedDealIds(dealIdsFromStorage);
+                setNavDealIdToPrimaryDealId(mapFromStorage);
+                setAssignedDealsLoading(false);
+              }
+              hasNavigationSeed = true;
+            }
+          }
+        } catch {
+          // ignore
+        }
+
+        if (!hasNavigationSeed && !cancelled) {
+          setAssignedDealsLoading(true);
+        }
+
         const {
           data: { session },
           error: sessionError,
@@ -391,7 +447,10 @@ export function useAssignedLeadDetails() {
 
         if (sessionError) throw sessionError;
         if (!session?.user) {
-          if (!cancelled) setAssignedDealIds([]);
+          if (!cancelled) {
+            setAssignedDealIds([]);
+            setNavDealIdToPrimaryDealId({});
+          }
           return;
         }
 
@@ -404,7 +463,10 @@ export function useAssignedLeadDetails() {
         if (profileError) throw profileError;
         const profileId = (profile?.id as string | null) ?? null;
         if (!profileId) {
-          if (!cancelled) setAssignedDealIds([]);
+          if (!cancelled) {
+            setAssignedDealIds([]);
+            setNavDealIdToPrimaryDealId({});
+          }
           return;
         }
 
@@ -422,24 +484,25 @@ export function useAssignedLeadDetails() {
           .map((r) => (typeof r?.deal_id === "number" ? (r.deal_id as number) : null))
           .filter((v): v is number => v != null);
 
-        // Fetch all deals to group by GHL name
         if (dealIds.length > 0) {
           const { data: dealRows, error: dealsError } = await supabase
             .from("monday_com_deals")
-            .select("id, ghl_name, deal_name")
+            .select("id, ghl_name, deal_name, phone_number")
             .in("id", dealIds)
             .limit(5000);
 
           if (dealsError) throw dealsError;
 
-          const dealMap = new Map<number, { ghlName: string }>();
-          for (const deal of (dealRows ?? []) as Array<{ id: number; ghl_name: string | null; deal_name: string | null }>) {
-            const ghlName = (deal.ghl_name ?? deal.deal_name ?? "").trim().toLowerCase();
-            dealMap.set(deal.id, { ghlName });
+          const dealMap = new Map<number, { name: string; phone: string }>();
+          for (const deal of (dealRows ?? []) as Array<{ id: number; ghl_name: string | null; deal_name: string | null; phone_number: string | null }>) {
+            const rawName = deal.ghl_name ?? deal.deal_name ?? "";
+            const nameSignature = getNameSignature(rawName);
+            const phoneDigits = (deal.phone_number ?? "").replace(/\D/g, "").trim();
+            dealMap.set(deal.id, { name: nameSignature, phone: phoneDigits });
           }
 
-          // Filter to unique GHL names, keeping first occurrence of each
-          const seenNames = new Set<string>();
+          // Filter to unique groups (phone + name signature), keeping first occurrence of each
+          const seenGroups = new Set<string>();
           const uniqueDealIds: number[] = [];
 
           for (const id of dealIds) {
@@ -449,19 +512,36 @@ export function useAssignedLeadDetails() {
               continue;
             }
 
-            if (!seenNames.has(dealInfo.ghlName)) {
-              seenNames.add(dealInfo.ghlName);
+            let groupKey: string;
+            if (dealInfo.phone && dealInfo.name) {
+              groupKey = `${dealInfo.phone}|${dealInfo.name}`;
+            } else if (dealInfo.phone) {
+              groupKey = `${dealInfo.phone}|${id}`;
+            } else if (dealInfo.name) {
+              groupKey = `name-${dealInfo.name}`;
+            } else {
+              groupKey = `row-${id}`;
+            }
+
+            if (!seenGroups.has(groupKey)) {
+              seenGroups.add(groupKey);
               uniqueDealIds.push(id);
             }
           }
 
           if (!cancelled) setAssignedDealIds(uniqueDealIds);
         } else {
-          if (!cancelled) setAssignedDealIds([]);
+          if (!cancelled) {
+            setAssignedDealIds([]);
+            setNavDealIdToPrimaryDealId({});
+          }
         }
       } catch (e) {
         console.error("[assigned-lead-details] load assigned deal ids error", e);
-        if (!cancelled) setAssignedDealIds([]);
+        if (!cancelled) {
+          setAssignedDealIds([]);
+          setNavDealIdToPrimaryDealId({});
+        }
       } finally {
         if (!cancelled) setAssignedDealsLoading(false);
       }
@@ -473,10 +553,18 @@ export function useAssignedLeadDetails() {
     };
   }, [router.isReady, dealId]);
 
+  const effectiveDealIdForNavigation = useMemo(() => {
+    if (!dealId) return null;
+    if (assignedDealIds.indexOf(dealId) >= 0) return dealId;
+    const mapped = navDealIdToPrimaryDealId[String(dealId)];
+    if (typeof mapped === "number" && Number.isFinite(mapped) && assignedDealIds.indexOf(mapped) >= 0) return mapped;
+    return assignedDealIds[0] ?? null;
+  }, [assignedDealIds, dealId, navDealIdToPrimaryDealId]);
+
   const currentAssignedIndex = useMemo(() => {
-    if (!dealId) return -1;
-    return assignedDealIds.indexOf(dealId);
-  }, [assignedDealIds, dealId]);
+    if (!effectiveDealIdForNavigation) return -1;
+    return assignedDealIds.indexOf(effectiveDealIdForNavigation);
+  }, [assignedDealIds, effectiveDealIdForNavigation]);
 
   const previousAssignedDealId = useMemo(() => {
     if (currentAssignedIndex < 0) return null;
@@ -497,6 +585,16 @@ export function useAssignedLeadDetails() {
     if (!nextAssignedDealId) return;
     await router.push(`/agent/assigned-lead-details?dealId=${encodeURIComponent(String(nextAssignedDealId))}`);
   };
+
+  useEffect(() => {
+    if (!router.isReady) return;
+    if (!dealId) return;
+    const mapped = navDealIdToPrimaryDealId[String(dealId)];
+    if (typeof mapped !== "number" || !Number.isFinite(mapped)) return;
+    if (mapped === dealId) return;
+    const query = { ...router.query, dealId: String(mapped) };
+    void router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
+  }, [dealId, navDealIdToPrimaryDealId, router]);
 
   useEffect(() => {
     if (selectedDeal) {
@@ -682,7 +780,8 @@ export function useAssignedLeadDetails() {
     getString(dealFallback, "ghl_name") ??
     getString(dealFallback, "deal_name") ??
     "Unknown";
-  const phone = getString(canonicalLeadRecord, "phone_number") ?? getString(dealFallback, "phone_number") ?? "-";
+  const phone =
+    getString(canonicalLeadRecord, "phone_number") ?? getString(dealFallback, "phone_number") ?? "-";
   const email = getString(canonicalLeadRecord, "email") ?? "-";
   const policyNumber = getString(canonicalLeadRecord, "policy_number") ?? "-";
   const carrier = getString(canonicalLeadRecord, "carrier") ?? getString(dealFallback, "carrier") ?? "-";
@@ -715,6 +814,13 @@ export function useAssignedLeadDetails() {
   const personalSsnLast4 = getString(personalLeadRecord, "social_security") ?? ssnLast4;
   const personalMonthlyPremium = getString(personalLeadRecord, "monthly_premium") ?? monthlyPremium;
   const personalAgent = getString(personalLeadRecord, "agent") ?? agent;
+
+  const canonicalNameSignature = getNameSignature(name);
+  const canonicalPhoneDigits = normalizePhoneDigits(
+    getString(canonicalLeadRecord, "phone_number") ?? getString(dealFallback, "phone_number") ?? "",
+  );
+  const canonicalPhoneLast10 =
+    canonicalPhoneDigits.length >= 10 ? canonicalPhoneDigits.slice(-10) : canonicalPhoneDigits;
 
   const personalAdditionalEntries = useMemo(() => {
     if (!personalLeadRecord) return [] as Array<[string, unknown]>;
@@ -891,48 +997,73 @@ export function useAssignedLeadDetails() {
 
     const unique = Array.from(byKey.values());
     unique.sort((a, b) => {
-      const at = Date.parse(a.last_updated ?? "") || 0;
-      const bt = Date.parse(b.last_updated ?? "") || 0;
+      const at = Date.parse(a.deal_creation_date ?? "") || 0;
+      const bt = Date.parse(b.deal_creation_date ?? "") || 0;
       return bt - at;
     });
 
-    return unique;
-  }, [duplicateResult, mondayDeals]);
+    const filtered = unique.filter((deal) => {
+      const key =
+        (deal.monday_item_id && deal.monday_item_id.trim().length ? `item:${deal.monday_item_id.trim()}` : null) ??
+        `id:${String(deal.id)}`;
 
-  const setSelectedPolicyKeyAndSyncUrlWithDealId = useCallback(
-    async (nextKey: string | null) => {
-      setSelectedPolicyKey(nextKey);
+      if (selectedPolicyKey && key === selectedPolicyKey) {
+        return true;
+      }
 
-      if (!router.isReady || !nextKey) return;
+      if (!canonicalNameSignature && !canonicalPhoneLast10) {
+        return true;
+      }
 
-      const match = (policyCards ?? []).find((d) => {
-        const key =
-          (d.monday_item_id && d.monday_item_id.trim().length ? `item:${d.monday_item_id.trim()}` : null) ??
-          `id:${String(d.id)}`;
-        return key === nextKey;
-      });
+      const dealNameSignature = getNameSignature(deal.ghl_name ?? deal.deal_name ?? "");
+      const dealDigits = normalizePhoneDigits(deal.phone_number ?? "");
+      const dealLast10 = dealDigits.length >= 10 ? dealDigits.slice(-10) : dealDigits;
 
-      const nextDealId = match && typeof match.id === "number" && Number.isFinite(match.id) ? match.id : null;
-      if (!nextDealId) return;
-      if (dealId === nextDealId) return;
+      const matchesName =
+        canonicalNameSignature && dealNameSignature ? canonicalNameSignature === dealNameSignature : true;
+      const matchesPhone =
+        canonicalPhoneLast10 && dealLast10 ? canonicalPhoneLast10 === dealLast10 : true;
 
-      const query = { ...router.query, dealId: String(nextDealId) };
-      await router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
-    },
-    [dealId, policyCards, router],
-  );
+      if (canonicalNameSignature && canonicalPhoneLast10) {
+        return matchesName && matchesPhone;
+      }
+      if (canonicalNameSignature) {
+        return matchesName;
+      }
+      if (canonicalPhoneLast10) {
+        return matchesPhone;
+      }
+      return true;
+    });
+
+    return filtered;
+  }, [duplicateResult, mondayDeals, canonicalNameSignature, canonicalPhoneLast10, selectedPolicyKey]);
+
+  const setSelectedPolicyKeyOnly = useCallback((nextKey: string | null) => {
+    setSelectedPolicyKey(nextKey);
+  }, []);
 
   useEffect(() => {
-    if (selectedPolicyKey) return;
-    if (!policyCards || policyCards.length === 0) return;
+    if (!policyCards || policyCards.length === 0) {
+      hasAutoSelectedRef.current = false;
+      if (selectedPolicyKey) setSelectedPolicyKey(null);
+      return;
+    }
 
-    const fromUrl = dealId ? policyCards.find((d) => d.id === dealId) : null;
-    const chosen = fromUrl ?? policyCards[0];
+    if (hasAutoSelectedRef.current && selectedPolicyKey) {
+      return;
+    }
+
+    const chosen = policyCards[0];
     const key =
       (chosen.monday_item_id && chosen.monday_item_id.trim().length ? `item:${chosen.monday_item_id.trim()}` : null) ??
       `id:${String(chosen.id)}`;
-    setSelectedPolicyKey(key);
-  }, [dealId, policyCards, selectedPolicyKey]);
+    
+    if (selectedPolicyKey !== key) {
+      setSelectedPolicyKeyOnly(key);
+      hasAutoSelectedRef.current = true;
+    }
+  }, [policyCards, selectedPolicyKey, setSelectedPolicyKeyOnly]);
 
   const policyViews = useMemo(() => {
     const ddfRows = (dailyFlowRows ?? []) as Array<Record<string, unknown>>;
@@ -1392,7 +1523,7 @@ export function useAssignedLeadDetails() {
     policyCards,
     policyViews,
     selectedPolicyKey,
-    setSelectedPolicyKey: setSelectedPolicyKeyAndSyncUrlWithDealId,
+    setSelectedPolicyKey: setSelectedPolicyKeyOnly,
     selectedPolicyView,
     verificationSessionId,
     verificationItems,

@@ -62,6 +62,27 @@ type LeadDbRow = {
   updated_at?: string | null;
 };
 
+const normalizeName = (value: string | null | undefined) => {
+  if (!value) return "";
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+const getNameSignature = (value: string | null | undefined) => {
+  const normalized = normalizeName(value);
+  if (!normalized) return "";
+  const parts = normalized.split(" ").filter(Boolean);
+  if (parts.length === 0) return "";
+  const first = parts[0] ?? "";
+  const last = parts.length > 1 ? parts[parts.length - 1] : parts[0] ?? "";
+  const firstKey = first.slice(0, 3);
+  const lastKey = last.slice(0, 3);
+  return `${firstKey}|${lastKey}`;
+};
+
 export default function AssignedLeadsPage() {
   const router = useRouter();
   const [search, setSearch] = useState("");
@@ -72,11 +93,16 @@ export default function AssignedLeadsPage() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   const PAGE_SIZE = 25;
+  const SEARCH_FETCH_LIMIT = 500;
+
+  const trimmedSearch = search.trim();
+  const isSearching = trimmedSearch.length > 0;
 
   const pageCount = useMemo(() => {
+    if (isSearching) return 1;
     if (!totalCount) return 1;
     return Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
-  }, [PAGE_SIZE, totalCount]);
+  }, [PAGE_SIZE, totalCount, isSearching]);
 
   const loadAssignedLeads = useCallback(async () => {
     setLoading(true);
@@ -106,16 +132,23 @@ export default function AssignedLeadsPage() {
         return;
       }
 
-      const from = (page - 1) * PAGE_SIZE;
-      const to = from + PAGE_SIZE - 1;
+      const from = isSearching ? 0 : (page - 1) * PAGE_SIZE;
+      const to = from + (isSearching ? SEARCH_FETCH_LIMIT : PAGE_SIZE) - 1;
 
-      const { data: assignmentRows, error: assignmentError, count } = await supabase
+      let assignmentsQuery = supabase
         .from("retention_assigned_leads")
         .select("id, deal_id, status, assigned_at", { count: "exact" })
         .eq("assignee_profile_id", profile.id)
         .eq("status", "active")
-        .order("assigned_at", { ascending: false })
-        .range(from, to);
+        .order("assigned_at", { ascending: false });
+
+      if (isSearching) {
+        assignmentsQuery = assignmentsQuery.limit(SEARCH_FETCH_LIMIT);
+      } else {
+        assignmentsQuery = assignmentsQuery.range(from, to);
+      }
+
+      const { data: assignmentRows, error: assignmentError, count } = await assignmentsQuery;
 
       if (assignmentError) {
         console.error("[agent-assigned-leads] assignments error", assignmentError);
@@ -224,28 +257,41 @@ export default function AssignedLeadsPage() {
     } finally {
       setLoading(false);
     }
-  }, [PAGE_SIZE, page]);
+  }, [PAGE_SIZE, SEARCH_FETCH_LIMIT, isSearching, page]);
 
   useEffect(() => {
     void loadAssignedLeads();
   }, [loadAssignedLeads]);
 
   const filteredLeads = useMemo(() => {
-    if (!search.trim()) return assignedLeads;
-    const q = search.toLowerCase();
+    if (!trimmedSearch) return assignedLeads;
+    const q = trimmedSearch.toLowerCase();
     return assignedLeads.filter((row) =>
       ((row.lead?.customer_full_name ?? row.deal?.ghl_name ?? row.deal?.deal_name ?? "").toLowerCase().includes(q)),
     );
-  }, [assignedLeads, search]);
+  }, [assignedLeads, trimmedSearch]);
 
   const groupedLeads = useMemo(() => {
     const groups = new Map<string, AssignedLeadRow[]>();
     
     for (const lead of filteredLeads) {
-      const phoneNumber = (lead.lead?.phone_number ?? lead.deal?.phone_number ?? "").trim();
-      const ghlName = (lead.lead?.customer_full_name ?? lead.deal?.ghl_name ?? lead.deal?.deal_name ?? "Unknown").trim().toLowerCase();
+      const rawName = lead.lead?.customer_full_name ?? lead.deal?.ghl_name ?? lead.deal?.deal_name ?? "";
+      const nameSignature = getNameSignature(rawName);
+      const phoneDigits = (lead.lead?.phone_number ?? lead.deal?.phone_number ?? "")
+        .replace(/\D/g, "")
+        .trim();
       
-      const groupKey = phoneNumber || `no-phone-${ghlName}`;
+      let groupKey: string;
+      if (phoneDigits && nameSignature) {
+        groupKey = `${phoneDigits}|${nameSignature}`;
+      } else if (phoneDigits) {
+        // Require matching name info to group by phone; otherwise keep entry unique.
+        groupKey = `${phoneDigits}|${lead.id}`;
+      } else if (nameSignature) {
+        groupKey = `name-${nameSignature}`;
+      } else {
+        groupKey = `row-${lead.id}`;
+      }
       
       if (!groups.has(groupKey)) {
         groups.set(groupKey, []);
@@ -259,6 +305,26 @@ export default function AssignedLeadsPage() {
       isDuplicate: leads.length > 1,
     }));
   }, [filteredLeads]);
+
+  const navigationContext = useMemo(() => {
+    const dealIds: number[] = [];
+    const dealIdToPrimaryDealId: Record<string, number> = {};
+
+    for (const group of groupedLeads) {
+      const primary = group.leads[0];
+      const primaryDealId = typeof primary?.deal_id === "number" ? primary.deal_id : null;
+      if (!primaryDealId) continue;
+      dealIds.push(primaryDealId);
+
+      for (const row of group.leads) {
+        const did = typeof row?.deal_id === "number" ? row.deal_id : null;
+        if (!did) continue;
+        dealIdToPrimaryDealId[String(did)] = primaryDealId;
+      }
+    }
+
+    return { dealIds, dealIdToPrimaryDealId };
+  }, [groupedLeads]);
 
   const toggleGroup = useCallback((groupName: string) => {
     setExpandedGroups((prev) => {
@@ -307,13 +373,9 @@ export default function AssignedLeadsPage() {
             </div>
 
             <div className="rounded-md border">
-              <div className="grid gap-3 p-3 text-sm font-medium text-muted-foreground" style={{ gridTemplateColumns: "2fr 1fr 1fr 1.2fr 1fr 0.8fr 0.8fr" }}>
+              <div className="grid gap-3 p-3 text-sm font-medium text-muted-foreground" style={{ gridTemplateColumns: "3fr 1.2fr 0.8fr" }}>
                 <div>GHL Name</div>
-                <div>Carrier</div>
-                <div>Product Type</div>
-                <div>Phone</div>
                 <div>Center</div>
-                <div>Creation Date</div>
                 <div className="text-right">Actions</div>
               </div>
               {loading ? (
@@ -328,7 +390,7 @@ export default function AssignedLeadsPage() {
                   
                   return (
                     <React.Fragment key={group.name}>
-                      <div className="grid gap-3 p-3 text-sm items-center border-t" style={{ gridTemplateColumns: "2fr 1fr 1fr 1.2fr 1fr 0.8fr 0.8fr" }}>
+                      <div className="grid gap-3 p-3 text-sm items-center border-t" style={{ gridTemplateColumns: "3fr 1.2fr 0.8fr" }}>
                         <div className="flex items-center gap-2">
                           {group.isDuplicate ? (
                             <button
@@ -365,22 +427,8 @@ export default function AssignedLeadsPage() {
                             );
                           })()}
                         </div>
-                        <div className="truncate" title={(primaryLead.lead?.carrier ?? primaryLead.deal?.carrier) ?? undefined}>
-                          {primaryLead.lead?.carrier ?? primaryLead.deal?.carrier ?? "-"}
-                        </div>
-                        <div className="truncate" title={(primaryLead.lead?.product_type ?? primaryLead.deal?.policy_type) ?? undefined}>
-                          {primaryLead.lead?.product_type ?? primaryLead.deal?.policy_type ?? "-"}
-                        </div>
-                        <div className="truncate" title={(primaryLead.lead?.phone_number ?? primaryLead.deal?.phone_number) ?? undefined}>
-                          {primaryLead.lead?.phone_number ?? primaryLead.deal?.phone_number ?? "-"}
-                        </div>
                         <div className="truncate" title={(primaryLead.lead?.lead_vendor ?? primaryLead.deal?.call_center) ?? undefined}>
                           {primaryLead.lead?.lead_vendor ?? primaryLead.deal?.call_center ?? "-"}
-                        </div>
-                        <div className="truncate text-xs text-muted-foreground">
-                          {primaryLead.lead?.created_at
-                            ? new Date(primaryLead.lead.created_at).toLocaleDateString()
-                            : new Date(primaryLead.assigned_at).toLocaleDateString()}
                         </div>
                         <div className="flex flex-col items-end justify-center gap-2">
                           <Button
@@ -388,6 +436,18 @@ export default function AssignedLeadsPage() {
                             variant="outline"
                             className="gap-1"
                             onClick={() => {
+                              try {
+                                sessionStorage.setItem(
+                                  "assignedLeadsNavigationContext",
+                                  JSON.stringify({
+                                    dealIds: navigationContext.dealIds,
+                                    dealIdToPrimaryDealId: navigationContext.dealIdToPrimaryDealId,
+                                    createdAt: Date.now(),
+                                  }),
+                                );
+                              } catch {
+                                // ignore
+                              }
                               const viewHref = `/agent/assigned-lead-details?dealId=${encodeURIComponent(String(primaryLead.deal_id ?? ""))}`;
                               void router.push(viewHref);
                             }}
@@ -406,7 +466,7 @@ export default function AssignedLeadsPage() {
                           const style = getDealLabelStyle(label);
                           
                           return (
-                            <div key={row.id} className="grid gap-3 p-3 text-sm items-center border-t bg-muted/30" style={{ gridTemplateColumns: "2fr 1fr 1fr 1.2fr 1fr 0.8fr 0.8fr" }}>
+                            <div key={row.id} className="grid gap-3 p-3 text-sm items-center border-t bg-muted/30" style={{ gridTemplateColumns: "3fr 1.2fr 0.8fr" }}>
                               <div className="flex items-center gap-2">
                                 <div className="w-5" />
                                 <div className="truncate" title={duplicateGhlName}>
@@ -421,22 +481,8 @@ export default function AssignedLeadsPage() {
                                   </span>
                                 ) : null}
                               </div>
-                              <div className="truncate" title={(row.lead?.carrier ?? row.deal?.carrier) ?? undefined}>
-                                {row.lead?.carrier ?? row.deal?.carrier ?? "-"}
-                              </div>
-                              <div className="truncate" title={(row.lead?.product_type ?? row.deal?.policy_type) ?? undefined}>
-                                {row.lead?.product_type ?? row.deal?.policy_type ?? "-"}
-                              </div>
-                              <div className="truncate" title={(row.lead?.phone_number ?? row.deal?.phone_number) ?? undefined}>
-                                {row.lead?.phone_number ?? row.deal?.phone_number ?? "-"}
-                              </div>
                               <div className="truncate" title={(row.lead?.lead_vendor ?? row.deal?.call_center) ?? undefined}>
                                 {row.lead?.lead_vendor ?? row.deal?.call_center ?? "-"}
-                              </div>
-                              <div className="truncate text-xs text-muted-foreground">
-                                {row.lead?.created_at
-                                  ? new Date(row.lead.created_at).toLocaleDateString()
-                                  : new Date(row.assigned_at).toLocaleDateString()}
                               </div>
                               <div className="flex flex-col items-end justify-center gap-2">
                                 <Button
@@ -444,6 +490,18 @@ export default function AssignedLeadsPage() {
                                   variant="outline"
                                   className="gap-1"
                                   onClick={() => {
+                                    try {
+                                      sessionStorage.setItem(
+                                        "assignedLeadsNavigationContext",
+                                        JSON.stringify({
+                                          dealIds: navigationContext.dealIds,
+                                          dealIdToPrimaryDealId: navigationContext.dealIdToPrimaryDealId,
+                                          createdAt: Date.now(),
+                                        }),
+                                      );
+                                    } catch {
+                                      // ignore
+                                    }
                                     void router.push(viewHref);
                                   }}
                                 >
