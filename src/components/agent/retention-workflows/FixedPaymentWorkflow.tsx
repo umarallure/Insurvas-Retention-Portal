@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
+import { DISPOSITION_METADATA } from "@/lib/dispositions/rules";
 import { type DealLite, type LeadInfo, getTodayDateEST, getString } from "./types";
 
 type WorkflowStep = "banking" | "instructions" | "callResult";
@@ -48,6 +49,10 @@ export function FixedPaymentWorkflow({ deal, leadInfo, lead, retentionAgent, onC
   const [shortFormStatus, setShortFormStatus] = React.useState<string>("");
   const [shortFormNotes, setShortFormNotes] = React.useState<string>("");
   const [submittingShortForm, setSubmittingShortForm] = React.useState(false);
+
+  const allDispositionOptions = React.useMemo(() => {
+    return Object.keys(DISPOSITION_METADATA).sort((a, b) => a.localeCompare(b));
+  }, []);
 
   const carrierName = (deal.carrier ?? "").trim();
   const carrierLower = carrierName.toLowerCase();
@@ -459,6 +464,18 @@ export function FixedPaymentWorkflow({ deal, leadInfo, lead, retentionAgent, onC
                 <div className="text-xs text-muted-foreground">Call Center</div>
                 <div className="font-semibold">{callCenter || "—"}</div>
               </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Writing Number</div>
+                <div className="font-semibold">{leadInfo.writingNumber || "—"}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">SSN</div>
+                <div className="font-semibold">{leadInfo.ssnLast4 || "—"}</div>
+              </div>
+              <div className="sm:col-span-2">
+                <div className="text-xs text-muted-foreground">Address</div>
+                <div className="font-semibold">{leadInfo.address || "—"}</div>
+              </div>
             </div>
           </div>
 
@@ -501,7 +518,7 @@ export function FixedPaymentWorkflow({ deal, leadInfo, lead, retentionAgent, onC
               }}
               className="flex-1"
             >
-              Complete Call
+              Next
             </Button>
           </div>
         </div>
@@ -517,7 +534,7 @@ export function FixedPaymentWorkflow({ deal, leadInfo, lead, retentionAgent, onC
           </div>
 
           <div className="space-y-2">
-            <Label>Status / Stage</Label>
+            <Label>Disposition/Stage</Label>
             <Select
               value={shortFormStatus}
               onValueChange={(val) => {
@@ -529,7 +546,11 @@ export function FixedPaymentWorkflow({ deal, leadInfo, lead, retentionAgent, onC
                 <SelectValue placeholder="Select Status" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="Updated Banking/draft date">Updated Banking/draft date</SelectItem>
+                {allDispositionOptions.map((d) => (
+                  <SelectItem key={d} value={d}>
+                    {DISPOSITION_METADATA[d as keyof typeof DISPOSITION_METADATA].label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

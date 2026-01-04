@@ -57,7 +57,6 @@ const productTypeOptions = [
   "Standard",
   "Graded",
   "Modified",
-  "GI",
   "Immediate",
   "Level",
   "ROP",
@@ -1209,7 +1208,7 @@ export default function RetentionWorkflowPage() {
                     setStep("callResult");
                   }}
                 >
-                  Complete Call
+                  Update Call Result
                 </Button>
               </div>
             </CardContent>

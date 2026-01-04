@@ -35,6 +35,7 @@ export function NewSaleWorkflow({
   const [quoteCoverage, setQuoteCoverage] = React.useState("");
   const [quotePremium, setQuotePremium] = React.useState("");
   const [quoteNotes, setQuoteNotes] = React.useState("");
+  const [draftDate, setDraftDate] = React.useState("");
 
   const handleGoToCallUpdate = async () => {
     if (!leadId || !policyNumber) return;
@@ -44,7 +45,7 @@ export function NewSaleWorkflow({
         policyNumber,
       )}&dealId=${encodeURIComponent(String(dealId ?? ""))}&callCenter=${encodeURIComponent(
         callCenter ?? "",
-      )}&retentionAgent=${encodeURIComponent(retentionAgent)}&retentionType=new_sale`,
+      )}&retentionAgent=${encodeURIComponent(retentionAgent)}&retentionType=new_sale&draftDate=${encodeURIComponent(draftDate)}`,
     );
   };
 
@@ -90,6 +91,10 @@ export function NewSaleWorkflow({
           <Label>Monthly Premium</Label>
           <Input value={quotePremium} onChange={(e) => setQuotePremium(e.target.value)} />
         </div>
+      </div>
+      <div className="space-y-2">
+        <Label>Draft Date</Label>
+        <Input type="date" value={draftDate} onChange={(e) => setDraftDate(e.target.value)} />
       </div>
       <div className="space-y-2">
         <Label>Notes</Label>

@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode, useEffect } from "react";
+import { ReactNode, useEffect, useRef } from "react";
 
 import { AppSidebar } from "@/components/app-sidebar";
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
@@ -15,18 +15,20 @@ import { cn } from "@/lib/utils";
 function DashboardShellInner({ children }: { children: ReactNode }) {
   const { setIsNotificationsOpen, dialerOpen } = useDashboard();
   const { open: sidebarOpen, setOpen: setSidebarOpen } = useSidebar();
+  const previousDialerOpenRef = useRef(dialerOpen);
 
   useEffect(() => {
     if (!dialerOpen || !sidebarOpen) return;
-
-    const timer = window.setTimeout(() => {
-      setSidebarOpen(false);
-    }, 2500);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
+    setSidebarOpen(false);
   }, [dialerOpen, sidebarOpen, setSidebarOpen]);
+
+  useEffect(() => {
+    const wasOpen = previousDialerOpenRef.current;
+    previousDialerOpenRef.current = dialerOpen;
+    if (!wasOpen || dialerOpen) return;
+
+    setSidebarOpen(true);
+  }, [dialerOpen, setSidebarOpen]);
 
   return (
     <>

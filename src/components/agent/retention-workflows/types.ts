@@ -47,7 +47,6 @@ export const productTypeOptions = [
   "Standard",
   "Graded",
   "Modified",
-  "GI",
   "Immediate",
   "Level",
   "ROP",

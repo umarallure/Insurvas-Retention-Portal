@@ -18,17 +18,27 @@ import {
 import { useDashboard } from "@/components/dashboard-context";
 import { getDealLabelStyle, getDealTagLabelFromGhlStage, getPolicyStatusStyle } from "@/lib/monday-deal-category-tags";
 import { NewSaleWorkflow, FixedPaymentWorkflow, CarrierRequirementsWorkflow, type RetentionType } from "@/components/agent/retention-workflows";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertCircle, ChevronDown, ChevronRight } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { QuickDispositionButton } from "@/components/agent/quick-disposition-button";
+import { QuickDispositionModal } from "@/components/agent/quick-disposition-modal";
+import type { AgentType } from "@/lib/dispositions/types";
 
 export default function AssignedLeadDetailsPage() {
   const { setCurrentLeadPhone } = useDashboard();
   const [expandedWorkflowKey, setExpandedWorkflowKey] = React.useState<string | null>(null);
   const [activeWorkflowType, setActiveWorkflowType] = React.useState<RetentionType | null>(null);
   const [policyStatusAlertOpen, setPolicyStatusAlertOpen] = React.useState(false);
+  const [newSaleConfirmOpen, setNewSaleConfirmOpen] = React.useState(false);
+  const [pendingNewSalePolicyKey, setPendingNewSalePolicyKey] = React.useState<string | null>(null);
   const [retentionAgent, setRetentionAgent] = React.useState("");
+  const [retentionAgentId, setRetentionAgentId] = React.useState("");
   const [expandedDealFlowRows, setExpandedDealFlowRows] = React.useState<Set<string>>(new Set());
+  const [dispositionModalOpen, setDispositionModalOpen] = React.useState(false);
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = React.useState(false);
+  const [pendingNavigationUrl, setPendingNavigationUrl] = React.useState<string | null>(null);
+  const allowNavigationRef = React.useRef(false);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -54,6 +64,7 @@ export default function AssignedLeadDetailsPage() {
         const name = (profile?.display_name as string | null) ?? null;
         if (!cancelled && name && name.trim().length) {
           setRetentionAgent(name);
+          setRetentionAgentId(session.user.id);
         }
       } catch {
         if (!cancelled) setRetentionAgent("");
@@ -104,6 +115,56 @@ export default function AssignedLeadDetailsPage() {
     productType,
     center,
   } = useAssignedLeadDetails();
+
+  React.useEffect(() => {
+    if (!router?.isReady) return;
+    if (router.pathname !== "/agent/assigned-lead-details") return;
+
+    const onClickCapture = (e: MouseEvent) => {
+      if (allowNavigationRef.current) return;
+      if (e.defaultPrevented) return;
+      if (e.button !== 0) return;
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+
+      const anchor = target.closest("a") as HTMLAnchorElement | null;
+      if (!anchor) return;
+      if (anchor.target && anchor.target !== "_self") return;
+      const href = anchor.getAttribute("href") ?? "";
+      if (!href) return;
+      if (href.startsWith("#")) return;
+      if (href.startsWith("mailto:") || href.startsWith("tel:")) return;
+
+      const isExternal = /^https?:\/\//i.test(href) || href.startsWith("//");
+      if (isExternal) return;
+
+      if (href === router.asPath) return;
+
+      e.preventDefault();
+      setPendingNavigationUrl(href);
+      setLeaveConfirmOpen(true);
+    };
+
+    window.addEventListener("click", onClickCapture, true);
+    return () => {
+      window.removeEventListener("click", onClickCapture, true);
+    };
+  }, [router]);
+
+  React.useEffect(() => {
+    if (!router?.events) return;
+    const onDone = () => {
+      allowNavigationRef.current = false;
+    };
+    router.events.on("routeChangeComplete", onDone);
+    router.events.on("routeChangeError", onDone);
+    return () => {
+      router.events.off("routeChangeComplete", onDone);
+      router.events.off("routeChangeError", onDone);
+    };
+  }, [router?.events]);
 
   React.useEffect(() => {
     const raw = typeof personalPhone === "string" ? personalPhone.trim() : "";
@@ -183,6 +244,112 @@ export default function AssignedLeadDetailsPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog
+        open={newSaleConfirmOpen}
+        onOpenChange={(open) => {
+          setNewSaleConfirmOpen(open);
+          if (!open) setPendingNewSalePolicyKey(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-amber-600" />
+              Confirm New Sale
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="text-sm text-muted-foreground leading-relaxed">
+            You are about to proceed with <span className="font-medium text-foreground">New Sale</span>.
+            Please confirm.
+          </div>
+
+          <div className="pt-4 flex gap-2">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => {
+                setNewSaleConfirmOpen(false);
+                setPendingNewSalePolicyKey(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="flex-1"
+              onClick={() => {
+                const key = pendingNewSalePolicyKey;
+                setNewSaleConfirmOpen(false);
+                setPendingNewSalePolicyKey(null);
+                if (!key) return;
+                setExpandedWorkflowKey(key);
+                setActiveWorkflowType("new_sale");
+              }}
+            >
+              Confirm
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={leaveConfirmOpen}
+        onOpenChange={(open) => {
+          setLeaveConfirmOpen(open);
+          if (!open) setPendingNavigationUrl(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Leave this page?</DialogTitle>
+            <DialogDescription>
+              You will lose your progress if you navigate away. Please open the other page in a new tab.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="pt-4 flex gap-2">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => {
+                setLeaveConfirmOpen(false);
+                setPendingNavigationUrl(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="flex-1"
+              onClick={() => {
+                const url = pendingNavigationUrl;
+                allowNavigationRef.current = true;
+                setLeaveConfirmOpen(false);
+                setPendingNavigationUrl(null);
+                if (url) void router.push(url);
+              }}
+            >
+              Continue
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <QuickDispositionModal
+        open={dispositionModalOpen}
+        onOpenChange={setDispositionModalOpen}
+        dealId={selectedPolicyView ? (selectedPolicyView.raw as { id?: number })?.id ?? null : null}
+        mondayItemId={selectedDeal?.monday_item_id ?? undefined}
+        policyNumber={selectedPolicyView?.policyNumber ?? undefined}
+        policyStatus={selectedDeal?.ghl_stage ?? undefined}
+        ghlStage={selectedDeal?.ghl_stage ?? undefined}
+        agentId={retentionAgentId}
+        agentName={retentionAgent}
+        agentType={"retention_agent" as AgentType}
+        onSuccess={() => {
+          // Intentionally do not refresh the page; modal will close after save.
+        }}
+      />
+
       <div className="w-full">
         <Card>
           <CardHeader>
@@ -196,6 +363,10 @@ export default function AssignedLeadDetailsPage() {
                 </CardDescription>
               </div>
               <div className="flex shrink-0 gap-2">
+                <QuickDispositionButton
+                  onClick={() => setDispositionModalOpen(true)}
+                  disabled={!selectedPolicyView || !dealId}
+                />
                 <Button
                   type="button"
                   variant="outline"
@@ -252,6 +423,11 @@ export default function AssignedLeadDetailsPage() {
                             const stageLabel = getDealTagLabelFromGhlStage(rawStage);
                             const stageStyle = getDealLabelStyle(stageLabel);
 
+                            const dispositionLabel =
+                              p.raw && typeof (p.raw as { disposition?: unknown }).disposition === "string"
+                                ? (((p.raw as { disposition?: string }).disposition ?? "").trim() || null)
+                                : null;
+
                             const statusLabel = (p.status ?? "").toString();
                             const statusStyle = getPolicyStatusStyle(statusLabel);
                             const shouldShowStatusPill =
@@ -284,15 +460,7 @@ export default function AssignedLeadDetailsPage() {
                                       {p.callCenter ?? "—"}
                                     </div>
                                   </div>
-                                  <div className="flex items-center gap-2">
-                                    {stageLabel && stageStyle ? (
-                                      <div
-                                        className="text-[11px] rounded-full border px-2 py-0.5 font-medium whitespace-nowrap"
-                                        style={{ backgroundColor: stageStyle.bg, borderColor: stageStyle.border, color: stageStyle.text }}
-                                      >
-                                        {stageLabel}
-                                      </div>
-                                    ) : null}
+                                  <div className="flex flex-col items-end gap-2">
                                     {shouldShowStatusPill ? (
                                       <div
                                         className="text-xs rounded-md border px-2.5 py-1 font-medium whitespace-nowrap"
@@ -303,6 +471,14 @@ export default function AssignedLeadDetailsPage() {
                                         }
                                       >
                                         {p.status}
+                                      </div>
+                                    ) : null}
+                                    {stageLabel && stageStyle ? (
+                                      <div
+                                        className="text-[11px] rounded-full border px-2 py-0.5 font-medium whitespace-nowrap"
+                                        style={{ backgroundColor: stageStyle.bg, borderColor: stageStyle.border, color: stageStyle.text }}
+                                      >
+                                        {stageLabel}
                                       </div>
                                     ) : null}
                                   </div>
@@ -317,16 +493,16 @@ export default function AssignedLeadDetailsPage() {
                                   </div>
 
                                   <div className="space-y-1">
-                                    <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Carrier</div>
-                                    <div className="text-sm font-medium text-foreground truncate" title={p.carrier ?? undefined}>
-                                      {p.carrier ?? "—"}
+                                    <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Agent</div>
+                                    <div className="text-sm font-medium text-foreground truncate" title={p.agentName ?? undefined}>
+                                      {p.agentName ?? "—"}
                                     </div>
                                   </div>
 
                                   <div className="space-y-1">
-                                    <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Agent</div>
-                                    <div className="text-sm font-medium text-foreground truncate" title={p.agentName ?? undefined}>
-                                      {p.agentName ?? "—"}
+                                    <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Disposition</div>
+                                    <div className="text-sm font-medium text-foreground truncate" title={dispositionLabel ?? undefined}>
+                                      {dispositionLabel ?? "—"}
                                     </div>
                                   </div>
 
@@ -350,12 +526,13 @@ export default function AssignedLeadDetailsPage() {
                                       {formatValue(p.initialDraftDate)}
                                     </div>
                                   </div>
+
                                   <div className="space-y-1">
-                                  <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">Status Notes</div>
-                                  <div className="text-sm text-foreground/80 line-clamp-2" title={p.statusNotes ?? undefined}>
-                                    {p.statusNotes ?? "—"}
+                                    <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">Status Notes</div>
+                                    <div className="text-sm text-foreground/80 line-clamp-2" title={p.statusNotes ?? undefined}>
+                                      {p.statusNotes ?? "—"}
+                                    </div>
                                   </div>
-                                </div>
                           
                                 </div>
 
@@ -382,6 +559,20 @@ export default function AssignedLeadDetailsPage() {
                                             setExpandedWorkflowKey(null);
                                             setActiveWorkflowType(null);
                                           } else {
+                                            const statusText = ((p.status ?? "") as string).toString().trim().toLowerCase();
+                                            const stageText = ((stageLabel ?? "") as string).toString().trim().toLowerCase();
+                                            const needsConfirm =
+                                              statusText.includes("failed payment") ||
+                                              statusText.includes("pending approval") ||
+                                              stageText.includes("failed payment") ||
+                                              stageText.includes("pending approval");
+
+                                            if (needsConfirm) {
+                                              setPendingNewSalePolicyKey(p.key);
+                                              setNewSaleConfirmOpen(true);
+                                              return;
+                                            }
+
                                             setExpandedWorkflowKey(p.key);
                                             setActiveWorkflowType("new_sale");
                                           }

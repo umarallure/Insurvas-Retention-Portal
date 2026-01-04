@@ -102,6 +102,17 @@ export default function CallUpdatePage() {
   const [selectedCarrier, setSelectedCarrier] = useState("");
 
   useEffect(() => {
+    if (!router.isReady) return;
+    const draftFromRoute = typeof router.query.draftDate === "string" ? router.query.draftDate : "";
+    if (!draftFromRoute.trim().length) return;
+
+    // Only seed from route when there isn't already an existing value loaded.
+    if (!draftDate.trim().length && !(dealFlowRow?.draft_date ?? "").toString().trim().length) {
+      setDraftDate(draftFromRoute);
+    }
+  }, [dealFlowRow?.draft_date, draftDate, router.isReady, router.query.draftDate]);
+
+  useEffect(() => {
     if (!dealFlowRow) return;
     setBufferAgent(dealFlowRow.buffer_agent ?? "");
     setLicensedAgent(dealFlowRow.licensed_agent_account ?? "");
@@ -109,7 +120,10 @@ export default function CallUpdatePage() {
     setNotes(dealFlowRow.notes ?? "");
     setCallSource(dealFlowRow.call_result ?? "");
     setSubmissionDate(dealFlowRow.date ?? "");
-    setDraftDate(dealFlowRow.draft_date ?? "");
+    {
+      const dd = (dealFlowRow.draft_date ?? "").toString().trim();
+      if (dd.length) setDraftDate(dd);
+    }
     setMonthlyPremium(dealFlowRow.monthly_premium != null ? String(dealFlowRow.monthly_premium) : "");
     setCoverageAmount(dealFlowRow.face_amount != null ? String(dealFlowRow.face_amount) : "");
     setSelectedCenter(dealFlowRow.lead_vendor ?? leadVendor ?? "");

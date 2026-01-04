@@ -6,9 +6,17 @@ import { useRouter } from "next/router";
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { supabase } from "@/lib/supabase";
 import { Loader2, EyeIcon, ChevronDown, ChevronRight } from "lucide-react";
 import { getDealLabelStyle, getDealTagLabelFromGhlStage } from "@/lib/monday-deal-category-tags";
+import { DISPOSITION_METADATA } from "@/lib/dispositions/rules";
 
 type AssignedLeadRow = {
   id: string;
@@ -26,6 +34,7 @@ type AssignedLeadRow = {
     carrier: string | null;
     policy_type: string | null;
     last_updated: string | null;
+    disposition: string | null;
   } | null;
   lead?: {
     customer_full_name: string | null;
@@ -48,6 +57,7 @@ type DealRow = {
   carrier: string | null;
   policy_type: string | null;
   last_updated: string | null;
+  disposition: string | null;
 };
 
 type LeadDbRow = {
@@ -86,6 +96,7 @@ const getNameSignature = (value: string | null | undefined) => {
 export default function AssignedLeadsPage() {
   const router = useRouter();
   const [search, setSearch] = useState("");
+  const [dispositionFilter, setDispositionFilter] = useState<string>("all");
   const [loading, setLoading] = useState(false);
   const [assignedLeads, setAssignedLeads] = useState<AssignedLeadRow[]>([]);
   const [page, setPage] = useState(1);
@@ -174,7 +185,7 @@ export default function AssignedLeadsPage() {
       if (dealIds.length > 0) {
         const { data: dealRows, error: dealsError } = await supabase
           .from("monday_com_deals")
-          .select("id,monday_item_id,ghl_name,deal_name,ghl_stage,phone_number,call_center,carrier,policy_type,last_updated")
+          .select("id,monday_item_id,ghl_name,deal_name,ghl_stage,phone_number,call_center,carrier,policy_type,last_updated,disposition")
           .in("id", dealIds)
           .limit(5000);
 
@@ -243,6 +254,7 @@ export default function AssignedLeadsPage() {
                   carrier: deal.carrier ?? null,
                   policy_type: deal.policy_type ?? null,
                   last_updated: deal.last_updated ?? null,
+                  disposition: deal.disposition ?? null,
                 }
               : null,
             // Optional: lead info is not required for this list view.
@@ -264,12 +276,25 @@ export default function AssignedLeadsPage() {
   }, [loadAssignedLeads]);
 
   const filteredLeads = useMemo(() => {
-    if (!trimmedSearch) return assignedLeads;
     const q = trimmedSearch.toLowerCase();
-    return assignedLeads.filter((row) =>
-      ((row.lead?.customer_full_name ?? row.deal?.ghl_name ?? row.deal?.deal_name ?? "").toLowerCase().includes(q)),
-    );
-  }, [assignedLeads, trimmedSearch]);
+    return assignedLeads.filter((row) => {
+      const nameOk =
+        !trimmedSearch ||
+        (row.lead?.customer_full_name ?? row.deal?.ghl_name ?? row.deal?.deal_name ?? "")
+          .toLowerCase()
+          .includes(q);
+
+      const dispoOk =
+        dispositionFilter === "all" ||
+        (row.deal?.disposition ?? "") === dispositionFilter;
+
+      return nameOk && dispoOk;
+    });
+  }, [assignedLeads, dispositionFilter, trimmedSearch]);
+
+  const allDispositionOptions = useMemo(() => {
+    return Object.keys(DISPOSITION_METADATA).sort((a, b) => a.localeCompare(b));
+  }, []);
 
   const groupedLeads = useMemo(() => {
     const groups = new Map<string, AssignedLeadRow[]>();
@@ -361,6 +386,25 @@ export default function AssignedLeadsPage() {
                   setPage(1);
                 }}
               />
+              <Select
+                value={dispositionFilter}
+                onValueChange={(v) => {
+                  setDispositionFilter(v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="sm:w-[260px]">
+                  <SelectValue placeholder="Filter by disposition" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Dispositions</SelectItem>
+                  {allDispositionOptions.map((d) => (
+                    <SelectItem key={d} value={d}>
+                      {DISPOSITION_METADATA[d as keyof typeof DISPOSITION_METADATA].label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <div className="flex gap-2">
                 <Button variant="secondary" type="button" disabled>
                   Smart Filters
@@ -373,9 +417,10 @@ export default function AssignedLeadsPage() {
             </div>
 
             <div className="rounded-md border">
-              <div className="grid gap-3 p-3 text-sm font-medium text-muted-foreground" style={{ gridTemplateColumns: "3fr 1.2fr 0.8fr" }}>
+              <div className="grid gap-3 p-3 text-sm font-medium text-muted-foreground" style={{ gridTemplateColumns: "2.5fr 1fr 1fr 0.8fr" }}>
                 <div>GHL Name</div>
                 <div>Center</div>
+                <div>Disposition</div>
                 <div className="text-right">Actions</div>
               </div>
               {loading ? (
@@ -390,7 +435,7 @@ export default function AssignedLeadsPage() {
                   
                   return (
                     <React.Fragment key={group.name}>
-                      <div className="grid gap-3 p-3 text-sm items-center border-t" style={{ gridTemplateColumns: "3fr 1.2fr 0.8fr" }}>
+                      <div className="grid gap-3 p-3 text-sm items-center border-t" style={{ gridTemplateColumns: "2.5fr 1fr 1fr 0.8fr" }}>
                         <div className="flex items-center gap-2">
                           {group.isDuplicate ? (
                             <button
@@ -430,6 +475,15 @@ export default function AssignedLeadsPage() {
                         <div className="truncate" title={(primaryLead.lead?.lead_vendor ?? primaryLead.deal?.call_center) ?? undefined}>
                           {primaryLead.lead?.lead_vendor ?? primaryLead.deal?.call_center ?? "-"}
                         </div>
+                        <div className="truncate" title={primaryLead.deal?.disposition ?? undefined}>
+                          {primaryLead.deal?.disposition ? (
+                            <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                              {primaryLead.deal.disposition}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </div>
                         <div className="flex flex-col items-end justify-center gap-2">
                           <Button
                             size="sm"
@@ -466,7 +520,7 @@ export default function AssignedLeadsPage() {
                           const style = getDealLabelStyle(label);
                           
                           return (
-                            <div key={row.id} className="grid gap-3 p-3 text-sm items-center border-t bg-muted/30" style={{ gridTemplateColumns: "3fr 1.2fr 0.8fr" }}>
+                            <div key={row.id} className="grid gap-3 p-3 text-sm items-center border-t bg-muted/30" style={{ gridTemplateColumns: "2.5fr 1fr 1fr 0.8fr" }}>
                               <div className="flex items-center gap-2">
                                 <div className="w-5" />
                                 <div className="truncate" title={duplicateGhlName}>
@@ -483,6 +537,15 @@ export default function AssignedLeadsPage() {
                               </div>
                               <div className="truncate" title={(row.lead?.lead_vendor ?? row.deal?.call_center) ?? undefined}>
                                 {row.lead?.lead_vendor ?? row.deal?.call_center ?? "-"}
+                              </div>
+                              <div className="truncate" title={row.deal?.disposition ?? undefined}>
+                                {row.deal?.disposition ? (
+                                  <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                                    {row.deal.disposition}
+                                  </span>
+                                ) : (
+                                  <span className="text-muted-foreground">—</span>
+                                )}
                               </div>
                               <div className="flex flex-col items-end justify-center gap-2">
                                 <Button

@@ -308,6 +308,18 @@ export function CarrierRequirementsWorkflow({
                 <div className="text-xs text-muted-foreground">Call Center</div>
                 <div className="font-semibold">{callCenter || "—"}</div>
               </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Writing Number</div>
+                <div className="font-semibold">{leadInfo.writingNumber || "—"}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">SSN</div>
+                <div className="font-semibold">{leadInfo.ssnLast4 || "—"}</div>
+              </div>
+              <div className="sm:col-span-2">
+                <div className="text-xs text-muted-foreground">Address</div>
+                <div className="font-semibold">{leadInfo.address || "—"}</div>
+              </div>
             </div>
           </div>
 
@@ -316,7 +328,7 @@ export function CarrierRequirementsWorkflow({
               Cancel
             </Button>
             <Button onClick={() => setStep("callResult")} className="flex-1">
-              Complete Call
+              Next
             </Button>
           </div>
         </div>
@@ -344,7 +356,12 @@ export function CarrierRequirementsWorkflow({
                 <SelectValue placeholder="Select Status" />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="Successfully fixed">Successfully fixed</SelectItem>
                 <SelectItem value="Fulfilled carrier requirements">Fulfilled carrier requirements</SelectItem>
+                <SelectItem value="Callback Required">Callback Required</SelectItem>
+                <SelectItem value="No Answer">No Answer</SelectItem>
+                <SelectItem value="Wrong Number">Wrong Number</SelectItem>
+                <SelectItem value="Do Not Call">Do Not Call</SelectItem>
               </SelectContent>
             </Select>
           </div>
