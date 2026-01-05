@@ -74,7 +74,7 @@ export async function saveDisposition(
         previous_disposition: previousDisposition,
       });
 
-    if (historyError) throw historyError;
+    if (historyError) console.log(historyError);
 
     // Determine GHL action if disposition affects GHL
     let ghlAction: GHLAction | undefined;

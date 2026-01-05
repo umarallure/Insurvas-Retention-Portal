@@ -5,6 +5,7 @@ import { useRouter } from "next/router";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { getDefaultLandingPath, useAccess } from "@/components/access-context";
 
 type DashboardContextValue = {
   isCommandOpen: boolean;
@@ -32,6 +33,7 @@ function isEditableElement(target: EventTarget | null): boolean {
 
 export function DashboardProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const { access } = useAccess();
   const [isCommandOpen, setIsCommandOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [currentLeadPhone, setCurrentLeadPhone] = useState<string | null>(null);
@@ -121,13 +123,17 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
           e.preventDefault();
           resetGoto();
 
+          const defaultLanding = getDefaultLandingPath(access);
+
           const to =
             nextKey === "h"
               ? "/"
               : nextKey === "i"
                 ? "/inbox"
                 : nextKey === "c"
-                  ? "/customers"
+                  ? access.isManager
+                    ? "/customers"
+                    : defaultLanding
                   : "/settings";
 
           router.push(to);
@@ -148,7 +154,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       resetGoto();
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [router, setIsCommandOpen]);
+  }, [access, router, setIsCommandOpen]);
 
   const value = useMemo<DashboardContextValue>(
     () => ({

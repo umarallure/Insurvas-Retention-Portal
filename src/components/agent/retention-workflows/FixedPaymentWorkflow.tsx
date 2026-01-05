@@ -258,7 +258,7 @@ export function FixedPaymentWorkflow({ deal, leadInfo, lead, retentionAgent, onC
       if (ddfError) throw ddfError;
 
       toast({ title: "Success", description: "Call result updated successfully" });
-      await router.push("/agent/assigned-leads");
+      router.reload();
     } catch {
       toast({ title: "Error", description: "Failed to save call result", variant: "destructive" });
     } finally {

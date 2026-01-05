@@ -8,6 +8,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { DashboardProvider } from "@/components/dashboard-context";
+import { AccessGate, AccessProvider } from "@/components/access-context";
 import { CommandPalette } from "@/components/command-palette";
 import { NotificationsSlideover } from "@/components/notifications-slideover";
 import { AircallWidget } from "@/components/aircall/aircall-widget";
@@ -85,20 +86,24 @@ export default function App({ Component, pageProps }: AppProps) {
   return (
     <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
       <main className={publicSans.variable}>
-        <DashboardProvider>
-          {isAuthPage ? (
-            <Component {...pageProps} />
-          ) : (
-            <DashboardShell>
+        <AccessProvider>
+          <DashboardProvider>
+            {isAuthPage ? (
               <Component {...pageProps} />
-            </DashboardShell>
-          )}
-          {isAuthPage ? null : <AircallWidget />}
-          <CommandPalette />
-          <NotificationsSlideover />
-          <Toaster />
-          <ThemedToastContainer />
-        </DashboardProvider>
+            ) : (
+              <AccessGate pathname={router.asPath.split("?")[0] ?? router.pathname}>
+                <DashboardShell>
+                  <Component {...pageProps} />
+                </DashboardShell>
+              </AccessGate>
+            )}
+            {isAuthPage ? null : <AircallWidget />}
+            <CommandPalette />
+            <NotificationsSlideover />
+            <Toaster />
+            <ThemedToastContainer />
+          </DashboardProvider>
+        </AccessProvider>
       </main>
     </ThemeProvider>
   );

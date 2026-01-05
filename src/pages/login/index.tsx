@@ -47,7 +47,7 @@ export default function LoginPage() {
           console.error("Failed to save session to localStorage");
         }
 
-        router.push("/customers");
+        router.push("/landing");
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "An error occurred during login";
