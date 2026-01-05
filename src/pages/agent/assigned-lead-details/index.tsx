@@ -622,8 +622,32 @@ export default function AssignedLeadDetailsPage() {
                                           const phoneNumberForRoute = raw && typeof raw["phone_number"] === "string" ? (raw["phone_number"] as string) : null;
                                           const agentNameForRoute = p.agentName && p.agentName !== "—" ? p.agentName : "";
                                           const writingNumberForRoute = raw && typeof raw["writing_no"] === "string" ? (raw["writing_no"] as string) : "";
-                                          const ssnLast4Raw = personalSsnLast4 !== "-" ? personalSsnLast4 : "";
-                                          const ssnLast4ForRoute = ssnLast4Raw.length > 4 ? ssnLast4Raw.slice(-4) : ssnLast4Raw;
+
+                                          const getVerificationValue = (field: string) => {
+                                            const item = verificationItems.find(
+                                              (it) => typeof it.field_name === "string" && it.field_name === field,
+                                            ) as Record<string, unknown> | undefined;
+                                            const itemId = item && typeof item.id === "string" ? (item.id as string) : "";
+                                            const fromInput = itemId ? (verificationInputValues[itemId] ?? "") : "";
+                                            const fromVerified = item && typeof item.verified_value === "string" ? (item.verified_value as string) : "";
+                                            const fromOriginal = item && typeof item.original_value === "string" ? (item.original_value as string) : "";
+
+                                            return String(fromInput || fromVerified || fromOriginal || "").trim();
+                                          };
+
+                                          const ssnFromVerification = (() => {
+                                            return getVerificationValue("social_security");
+                                          })();
+
+                                          const dobFromVerification = getVerificationValue("date_of_birth");
+                                          const addressFromVerification = getVerificationValue("street_address");
+
+                                          const ssnLast4Raw = (
+                                            (ssnFromVerification || "") || (personalSsnLast4 !== "-" ? personalSsnLast4 : "")
+                                          ).trim();
+
+                                          const ssnDigits = ssnLast4Raw.replace(/\D/g, "");
+                                          const ssnLast4ForRoute = ssnDigits.length > 4 ? ssnDigits.slice(-4) : ssnDigits;
 
                                           const deal = {
                                             dealId: dealIdForRoute,
@@ -635,12 +659,12 @@ export default function AssignedLeadDetailsPage() {
                                           };
 
                                           const leadInfo = {
-                                            dob: personalDob !== "-" ? personalDob : "",
+                                            dob: (dobFromVerification || (personalDob !== "-" ? personalDob : "")).trim(),
                                             ghlStage: selectedDeal?.ghl_stage ?? "",
                                             agentName: agentNameForRoute,
                                             writingNumber: writingNumberForRoute,
                                             ssnLast4: ssnLast4ForRoute,
-                                            address: personalAddress1 !== "-" ? personalAddress1 : "",
+                                            address: (addressFromVerification || (personalAddress1 !== "-" ? personalAddress1 : "")).trim(),
                                           };
 
                                           const handleCancel = () => {

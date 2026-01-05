@@ -313,7 +313,7 @@ export function CarrierRequirementsWorkflow({
                 <div className="font-semibold">{leadInfo.writingNumber || "—"}</div>
               </div>
               <div>
-                <div className="text-xs text-muted-foreground">SSN</div>
+                <div className="text-xs text-muted-foreground">Last 4 Agent SSN</div>
                 <div className="font-semibold">{leadInfo.ssnLast4 || "—"}</div>
               </div>
               <div className="sm:col-span-2">

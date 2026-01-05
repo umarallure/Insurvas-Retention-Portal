@@ -269,6 +269,10 @@ export function FixedPaymentWorkflow({ deal, leadInfo, lead, retentionAgent, onC
   const policyNumber = (deal.policyNumber ?? "").trim();
   const callCenter = (deal.callCenter ?? "").trim();
 
+  const ssnRaw = (getString(lead, "social_security") ?? leadInfo.ssnLast4 ?? "").trim();
+  const ssnDigits = ssnRaw.replace(/\D/g, "");
+  const ssnLast4 = ssnDigits.length >= 4 ? ssnDigits.slice(-4) : ssnDigits;
+
   return (
     <div className="space-y-4">
       {step === "banking" ? (
@@ -469,8 +473,8 @@ export function FixedPaymentWorkflow({ deal, leadInfo, lead, retentionAgent, onC
                 <div className="font-semibold">{leadInfo.writingNumber || "—"}</div>
               </div>
               <div>
-                <div className="text-xs text-muted-foreground">SSN</div>
-                <div className="font-semibold">{leadInfo.ssnLast4 || "—"}</div>
+                <div className="text-xs text-muted-foreground">Last 4 Agent SSN</div>
+                <div className="font-semibold">{ssnLast4 || "—"}</div>
               </div>
               <div className="sm:col-span-2">
                 <div className="text-xs text-muted-foreground">Address</div>
