@@ -5,9 +5,10 @@ import Link from "next/link";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { randomInt } from "@/lib/random";
 import type { Period } from "@/types";
 import type { DateRange } from "react-day-picker";
+import { getDashboardStats } from "@/lib/dashboard-stats";
+import { subDays } from "date-fns";
 
 import {
   UsersIcon,
@@ -79,27 +80,95 @@ type StatView = {
 
 export function HomeStats({ period, range }: { period: Period; range: DateRange }) {
   const [stats, setStats] = React.useState<StatView[]>([]);
-
-  const startMs = range.from?.getTime() ?? 0;
-  const endMs = range.to?.getTime() ?? 0;
+  const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {
-    setStats(
-      baseStats.map((s) => {
-        const value = randomInt(s.minValue, s.maxValue);
-        const variation = randomInt(s.minVariation, s.maxVariation);
-        return {
-          title: s.title,
-          icon: s.icon,
-          value: s.formatter ? s.formatter(value) : value,
-          variation,
+    let cancelled = false;
+
+    const fetchStats = async () => {
+      setLoading(true);
+      try {
+        // Calculate previous period for comparison
+        const rangeDays = range.from && range.to 
+          ? Math.ceil((range.to.getTime() - range.from.getTime()) / (1000 * 60 * 60 * 24))
+          : 14;
+        
+        const previousRange: DateRange = {
+          from: range.from ? subDays(range.from, rangeDays) : subDays(new Date(), rangeDays * 2),
+          to: range.from ? subDays(range.from, 1) : subDays(new Date(), rangeDays),
         };
-      })
+
+        const dashboardStats = await getDashboardStats(range, previousRange);
+
+        if (cancelled) return;
+
+        const statsData: StatView[] = [
+          {
+            title: "New Leads",
+            icon: <UsersIcon className="size-4" />,
+            value: dashboardStats.newLeads.toLocaleString(),
+            variation: dashboardStats.variation?.deals ?? 0,
+          },
+          {
+            title: "Assigned Leads",
+            icon: <PieChartIcon className="size-4" />,
+            value: dashboardStats.assignedLeads.toLocaleString(),
+            variation: 0,
+          },
+          {
+            title: "Unassigned Leads",
+            icon: <ShoppingCartIcon className="size-4" />,
+            value: dashboardStats.unassignedLeads.toLocaleString(),
+            variation: 0,
+          },
+          {
+            title: "Handled Policies",
+            icon: <DollarSignIcon className="size-4" />,
+            value: dashboardStats.handledPolicies.toLocaleString(),
+            variation: 0,
+          },
+          {
+            title: "Fixed Policies",
+            icon: <ShoppingCartIcon className="size-4" />,
+            value: dashboardStats.totalFixedPolicies.toLocaleString(),
+            variation: 0,
+          },
+        ];
+
+        setStats(statsData);
+      } catch (error) {
+        console.error("[HomeStats] Error fetching stats:", error);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void fetchStats();
+    return () => {
+      cancelled = true;
+    };
+  }, [range]);
+
+  if (loading) {
+    return (
+      <div className="rounded-lg border bg-card p-8 text-center">
+        <div className="text-sm text-muted-foreground">Loading statistics...</div>
+      </div>
     );
-  }, [period, startMs, endMs]);
+  }
+
+  if (stats.length === 0) {
+    return (
+      <div className="rounded-lg border bg-card p-8 text-center">
+        <div className="text-sm text-muted-foreground">No statistics available</div>
+      </div>
+    );
+  }
 
   return (
-    <div className="grid gap-4 sm:gap-6 lg:grid-cols-4 lg:gap-px">
+    <div className="grid gap-4 sm:gap-6 lg:grid-cols-5 lg:gap-px">
       {stats.map((s) => (
         <Link key={s.title} href="/customers" className="group">
           <Card className="rounded-lg lg:rounded-none lg:first:rounded-l-lg lg:last:rounded-r-lg hover:z-10">

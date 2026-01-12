@@ -28,8 +28,7 @@ export type LADisposition =
   | "Needs Callback"
   | "Not Interested"
   | "Chargeback DQ"
-  | "DQ"
-  | "Submitted";
+  | "DQ";
 
 // All possible dispositions
 export type Disposition = RADisposition | LADisposition;

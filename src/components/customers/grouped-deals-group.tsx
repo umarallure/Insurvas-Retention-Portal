@@ -107,6 +107,7 @@ export function GroupedDealsGroup({
           "id,monday_item_id,policy_number,carrier,policy_status,ghl_name,ghl_stage,phone_number,call_center,deal_name",
           { count: "exact" }
         )
+        .eq("is_active", true)
         .order("last_updated", { ascending: false, nullsFirst: false })
         .range(from, to);
 

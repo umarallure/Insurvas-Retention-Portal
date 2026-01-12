@@ -17,8 +17,8 @@ export default function CustomersPage() {
   }, []);
 
   return (
-    <div className="w-full px-8 py-10 h-screen overflow-hidden bg-muted/20 flex flex-col">
-      <div className="max-w-6xl mx-auto w-full flex-1 min-h-0">
+    <div className="w-full px-4 py-4 h-screen overflow-hidden bg-muted/20 flex flex-col">
+      <div className="w-full flex-1 min-h-0">
         {mounted ? <DealsKanbanView key={refreshToken} onRefresh={refresh} refreshLoading={loading} /> : null}
       </div>
     </div>

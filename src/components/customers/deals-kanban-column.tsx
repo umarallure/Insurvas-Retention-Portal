@@ -38,52 +38,49 @@ export function DealsKanbanColumn({
   }, [count, pageSize]);
 
   return (
-    <div className="rounded-xl border bg-card shadow-sm overflow-hidden flex flex-col min-h-0 h-full">
-      <div className="px-4 py-3 bg-muted/10 border-b" style={{ borderLeft: `4px solid ${color}` }}>
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-sm font-bold" style={{ color }}>
+    <div className="rounded-lg border bg-card shadow-sm overflow-hidden flex flex-col min-h-0 h-full">
+      <div className="bg-muted/10 border-b" style={{ borderLeft: `4px solid ${color}` }}>
+        <div className="px-4 py-3 border-b border-border/50">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-lg font-bold tracking-wide" style={{ color }}>
             {title.toUpperCase()}
           </div>
-          <Badge variant="secondary" className="text-[10px] h-5 px-1.5 rounded-full">
-            {typeof count === "number" ? count : "—"}
+            <Badge variant="secondary" className="text-sm h-8 px-4 rounded-full font-bold">
+            {typeof count === "number" ? count.toLocaleString() : "—"}
           </Badge>
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto p-3">
+        <div className="px-4 py-2.5 bg-card border-b border-border/50 shrink-0">
+          <div className="flex items-center justify-between gap-2 text-base text-muted-foreground">
+            <div className="font-semibold">
+              Page {page}
+              {totalPages ? ` of ${totalPages}` : ""}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={!canPrev} onClick={onPrev} className="h-9 px-4 text-base font-medium">
+                Prev
+              </Button>
+              <Button variant="outline" size="sm" disabled={!canNext} onClick={onNext} className="h-9 px-4 text-base font-medium">
+                Next
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 min-h-0 flex flex-col">
         {loading ? (
-          <div className="text-sm text-muted-foreground">Loading...</div>
+          <div className="text-lg text-muted-foreground text-center py-12 font-medium">Loading...</div>
         ) : rows.length === 0 ? (
-          <div className="text-sm text-muted-foreground">No records.</div>
+          <div className="text-lg text-muted-foreground text-center py-12 font-medium">No records.</div>
         ) : (
-          <div className="space-y-3">
+          <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
             {rows.map((deal) => (
               <DealsKanbanCard key={deal.id} deal={deal} />
             ))}
           </div>
         )}
-      </div>
-
-      <div className="border-t bg-card px-3 py-2">
-        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-          <div>
-            Page <span className="font-medium">{page}</span>
-            {totalPages ? (
-              <>
-                {" "}
-                of <span className="font-medium">{totalPages}</span>
-              </>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" disabled={!canPrev} onClick={onPrev}>
-              Previous
-            </Button>
-            <Button variant="outline" size="sm" disabled={!canNext} onClick={onNext}>
-              Next
-            </Button>
-          </div>
-        </div>
       </div>
     </div>
   );

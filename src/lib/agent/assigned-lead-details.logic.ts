@@ -320,6 +320,7 @@ export function useAssignedLeadDetails() {
               const { data: relatedRows, error: relatedErr } = await supabase
                 .from("monday_com_deals")
                 .select("*")
+                .eq("is_active", true)
                 .or(orParts.join(","))
                 .order("last_updated", { ascending: false, nullsFirst: false });
 
@@ -586,15 +587,277 @@ export function useAssignedLeadDetails() {
     await router.push(`/agent/assigned-lead-details?dealId=${encodeURIComponent(String(nextAssignedDealId))}`);
   };
 
+  // Validate that dealId belongs to the current agent
+  // This checks both direct assignment and related deals (for duplicate/grouped deals)
+  // Only redirects if definitively unauthorized - allows page to load normally otherwise
   useEffect(() => {
     if (!router.isReady) return;
     if (!dealId) return;
+    // Wait a bit for the assigned deals to load from the other effect
+    if (assignedDealsLoading) return;
+    
+    let cancelled = false;
+    let redirectTimeout: NodeJS.Timeout | null = null;
+    
+    const verifyAuthorization = async () => {
+      try {
+        // Get session and profile first (needed for all checks)
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
+
+        if (sessionError || !session?.user) {
+          console.warn("[assigned-lead-details] Session check failed");
+          if (!cancelled && !session?.user) {
+            redirectTimeout = setTimeout(() => {
+              void router.push("/agent/assigned-leads");
+            }, 1500);
+          }
+          return;
+        }
+
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("id, display_name")
+          .eq("user_id", session.user.id)
+          .maybeSingle();
+
+        if (profileError || !profile) {
+          console.error("[assigned-lead-details] Profile lookup failed:", profileError);
+          if (!cancelled && !profile) {
+            redirectTimeout = setTimeout(() => {
+              void router.push("/agent/assigned-leads");
+            }, 1500);
+          }
+          return;
+        }
+
+        const agentName = typeof profile.display_name === "string" ? profile.display_name.trim() : null;
+        
+        if (!agentName) {
+          console.error("[assigned-lead-details] Agent name not found in profile");
+          // Continue with authorization check but skip handled check if no agent name
+        }
+
+        // Helper function to check if a deal has already been handled
+        const checkIfHandled = async (checkDealId: number): Promise<boolean> => {
+          if (!agentName) {
+            return false; // Can't check if handled without agent name
+          }
+          
+          try {
+            // Get the deal's submission_id (monday_item_id)
+            const { data: dealInfo } = await supabase
+              .from("monday_com_deals")
+              .select("monday_item_id")
+              .eq("id", checkDealId)
+              .maybeSingle();
+
+            if (!dealInfo || typeof dealInfo.monday_item_id !== "string") {
+              return false; // Can't determine if handled without submission_id
+            }
+
+            const submissionId = dealInfo.monday_item_id.trim();
+            if (!submissionId) return false;
+
+            // Check if this submission has already been handled by this agent
+            const { data: handledEntry } = await supabase
+              .from("retention_deal_flow")
+              .select("id")
+              .eq("submission_id", submissionId)
+              .eq("retention_agent", agentName)
+              .limit(1)
+              .maybeSingle();
+
+            return !!handledEntry;
+          } catch {
+            return false; // On error, assume not handled to allow access
+          }
+        };
+
+        // First, check if dealId is in the already-loaded assignedDealIds (fast check)
+        if (assignedDealIds.includes(dealId)) {
+          // Check if it's already been handled
+          const isHandled = await checkIfHandled(dealId);
+          if (isHandled) {
+            console.warn("[assigned-lead-details] Lead already handled - blocking access (fast path)", {
+              dealId,
+            });
+            if (!cancelled) {
+              setError("This lead has already been handled. You cannot access it again.");
+              redirectTimeout = setTimeout(() => {
+                void router.push("/agent/assigned-leads");
+              }, 2000);
+            }
+            return;
+          }
+          console.log("[assigned-lead-details] Authorization verified via assignedDealIds for dealId:", dealId);
+          return;
+        }
+
+        // Check if it's a mapped dealId (duplicate that maps to primary)
     const mapped = navDealIdToPrimaryDealId[String(dealId)];
-    if (typeof mapped !== "number" || !Number.isFinite(mapped)) return;
+        if (typeof mapped === "number" && Number.isFinite(mapped) && assignedDealIds.includes(mapped)) {
+          // Check if the mapped (primary) deal has been handled
+          const isHandled = await checkIfHandled(mapped);
+          if (isHandled) {
+            console.warn("[assigned-lead-details] Lead already handled - blocking access (mapped path)", {
+              dealId,
+              mappedDealId: mapped,
+            });
+            if (!cancelled) {
+              setError("This lead has already been handled. You cannot access it again.");
+              redirectTimeout = setTimeout(() => {
+                void router.push("/agent/assigned-leads");
+              }, 2000);
+            }
+            return;
+          }
+          console.log("[assigned-lead-details] Authorization verified via mapped dealId for dealId:", dealId);
+          return;
+        }
+
+        // Check if this exact dealId is assigned
+        const { data: assignment, error: assignmentError } = await supabase
+          .from("retention_assigned_leads")
+          .select("id")
+          .eq("deal_id", dealId)
+          .eq("assignee_profile_id", profile.id)
+          .eq("status", "active")
+          .maybeSingle();
+
+        if (assignmentError) {
+          console.error("[assigned-lead-details] Error checking assignment:", assignmentError);
+          // Don't redirect on database errors - allow page to load
+          return;
+        }
+
+        if (assignment) {
+          // Deal is assigned - now check if it's already been handled
+          const isHandled = await checkIfHandled(dealId);
+          if (isHandled) {
+            console.warn("[assigned-lead-details] Lead already handled - blocking access (direct DB check)", {
+              dealId,
+              profileId: profile.id
+            });
+            if (!cancelled) {
+              setError("This lead has already been handled. You cannot access it again.");
+              redirectTimeout = setTimeout(() => {
+                void router.push("/agent/assigned-leads");
+              }, 2000);
+            }
+            return;
+          }
+
+          console.log("[assigned-lead-details] Authorization verified via direct DB check for dealId:", dealId);
+          return;
+        }
+
+        // Deal is not directly assigned - check if any related deals (same customer) are assigned
+        // Get deal info to find related deals
+        const { data: dealInfo } = await supabase
+          .from("monday_com_deals")
+          .select("phone_number, ghl_name, deal_name")
+          .eq("id", dealId)
+          .maybeSingle();
+
+        if (dealInfo) {
+          const phone = typeof dealInfo.phone_number === "string" ? dealInfo.phone_number.trim() : "";
+          const ghlName = typeof dealInfo.ghl_name === "string" ? dealInfo.ghl_name.trim() : "";
+          const dealName = typeof dealInfo.deal_name === "string" ? dealInfo.deal_name.trim() : "";
+
+          // Check if any deal with same phone/name is assigned to this agent
+          if (phone || ghlName || dealName) {
+            const orParts: string[] = [];
+            if (phone) orParts.push(`phone_number.eq.${phone}`);
+            if (ghlName) orParts.push(`ghl_name.ilike.%${ghlName.replace(/,/g, "")}%`);
+            if (dealName) orParts.push(`deal_name.ilike.%${dealName.replace(/,/g, "")}%`);
+
+            if (orParts.length > 0) {
+              const { data: relatedDeals } = await supabase
+                .from("monday_com_deals")
+                .select("id")
+                .or(orParts.join(","))
+                .limit(50);
+
+              if (relatedDeals && relatedDeals.length > 0) {
+                const relatedDealIds = relatedDeals
+                  .map((d) => (typeof d.id === "number" ? d.id : null))
+                  .filter((id): id is number => id !== null);
+
+                if (relatedDealIds.length > 0) {
+                  const { data: relatedAssignment } = await supabase
+                    .from("retention_assigned_leads")
+                    .select("id")
+                    .in("deal_id", relatedDealIds)
+                    .eq("assignee_profile_id", profile.id)
+                    .eq("status", "active")
+                    .limit(1)
+                    .maybeSingle();
+
+                  if (relatedAssignment) {
+                    // Related deal is assigned - check if the original dealId has been handled
+                    const isHandled = await checkIfHandled(dealId);
+                    if (isHandled) {
+                      console.warn("[assigned-lead-details] Lead already handled - blocking access (related deals path)", {
+                        dealId,
+                      });
+                      if (!cancelled) {
+                        setError("This lead has already been handled. You cannot access it again.");
+                        redirectTimeout = setTimeout(() => {
+                          void router.push("/agent/assigned-leads");
+                        }, 2000);
+                      }
+                      return;
+                    }
+                    console.log("[assigned-lead-details] Authorization verified via related deal for dealId:", dealId);
+                    return;
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // No assignment found - unauthorized
+        console.warn("[assigned-lead-details] Unauthorized access attempt - dealId not assigned to agent", {
+          dealId,
+          profileId: profile.id
+        });
+        if (!cancelled) {
+          redirectTimeout = setTimeout(() => {
+            void router.push("/agent/assigned-leads");
+          }, 1500);
+        }
+      } catch (authError) {
+        console.error("[assigned-lead-details] Error during authorization check:", authError);
+        // Don't redirect on catch - allow page to try loading
+      }
+    };
+
+    // Run authorization check
+    void verifyAuthorization();
+
+    return () => {
+      cancelled = true;
+      if (redirectTimeout) clearTimeout(redirectTimeout);
+    };
+  }, [dealId, router, assignedDealIds, assignedDealsLoading, navDealIdToPrimaryDealId]);
+
+  // Handle mapping to primary deal ID (separate effect for navigation)
+  useEffect(() => {
+    if (!router.isReady) return;
+    if (!dealId) return;
+    if (assignedDealsLoading) return; // Wait for assigned deals to load for navigation mapping
+    
+    const mapped = navDealIdToPrimaryDealId[String(dealId)];
+    if (mapped && typeof mapped === "number" && Number.isFinite(mapped)) {
     if (mapped === dealId) return;
     const query = { ...router.query, dealId: String(mapped) };
     void router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
-  }, [dealId, navDealIdToPrimaryDealId, router]);
+    }
+  }, [dealId, navDealIdToPrimaryDealId, router, assignedDealsLoading]);
 
   useEffect(() => {
     if (selectedDeal) {
@@ -1221,64 +1484,417 @@ export function useAssignedLeadDetails() {
     return policyViews.find((p) => p.key === selectedPolicyKey) ?? null;
   }, [policyViews, selectedPolicyKey]);
 
+  // State for fetched database data
+  const [fetchedDealData, setFetchedDealData] = useState<MondayComDeal | null>(null);
+  const [fetchedLeadData, setFetchedLeadData] = useState<LeadRecord | null>(null);
+  const [fetchingData, setFetchingData] = useState(false);
+
+  // Fetch complete data from database when policy is selected
+  useEffect(() => {
+    if (!selectedPolicyView) {
+      setFetchedDealData(null);
+      setFetchedLeadData(null);
+      return;
+    }
+
+    let cancelled = false;
+    const fetchData = async () => {
+      setFetchingData(true);
+      try {
+        // Get deal ID from selected policy
+        const dealId = selectedPolicyView?.raw?.id;
+        const policyNumber = selectedPolicyView?.policyNumber;
+        const leadId = (lead && typeof lead["id"] === "string" ? (lead["id"] as string) : null) ??
+          (personalLead && typeof personalLead["id"] === "string" ? (personalLead["id"] as string) : null);
+
+        // Fetch deal data from monday_com_deals
+        let dealData: MondayComDeal | null = null;
+        
+        if (dealId && typeof dealId === "number" && Number.isFinite(dealId)) {
+          const { data, error: dealError } = await supabase
+            .from("monday_com_deals")
+            .select("*")
+            .eq("id", dealId)
+            .maybeSingle();
+
+          if (!cancelled && !dealError && data) {
+            dealData = data as MondayComDeal;
+            setFetchedDealData(dealData);
+          }
+        } else if (policyNumber && policyNumber !== "—") {
+          // Try to find by policy number
+          const { data, error: dealError } = await supabase
+            .from("monday_com_deals")
+            .select("*")
+            .eq("policy_number", policyNumber)
+            .eq("is_active", true)
+            .order("last_updated", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (!cancelled && !dealError && data) {
+            dealData = data as MondayComDeal;
+            setFetchedDealData(dealData);
+          }
+        }
+
+        // Fetch lead data - try multiple methods
+        let leadData: LeadRecord | null = null;
+
+        // Method 1: Direct lead ID
+        if (leadId && leadId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)) {
+          const { data, error: leadError } = await supabase
+            .from("leads")
+            .select("*")
+            .eq("id", leadId)
+            .maybeSingle();
+
+          if (!cancelled && !leadError && data) {
+            leadData = data as LeadRecord;
+          }
+        }
+
+        // Method 2: If we have deal data, try to find lead by submission_id (monday_item_id)
+        if (!leadData && dealData && typeof dealData.monday_item_id === "string" && dealData.monday_item_id.trim()) {
+          const { data, error: submissionError } = await supabase
+            .from("leads")
+            .select("*")
+            .eq("submission_id", dealData.monday_item_id.trim())
+            .order("updated_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (!cancelled && !submissionError && data) {
+            leadData = data as LeadRecord;
+          }
+        }
+
+        // Method 3: Try to find lead by phone number from deal
+        if (!leadData && dealData && typeof dealData.phone_number === "string" && dealData.phone_number.trim()) {
+          const phone = dealData.phone_number.trim();
+          const normalizedPhone = phone.replace(/\D/g, "");
+          
+          if (normalizedPhone.length >= 10) {
+            // Extract last 10 digits for matching
+            const last10 = normalizedPhone.slice(-10);
+            
+            // Try multiple phone number formats
+            const phonePatterns = [
+              last10, // Last 10 digits
+              `1${last10}`, // With country code
+              `+1${last10}`, // With + country code
+              phone, // Original format
+            ];
+
+            // Try each pattern
+            for (const pattern of phonePatterns) {
+              if (cancelled) break;
+              
+              const { data, error: phoneError } = await supabase
+                .from("leads")
+                .select("*")
+                .or(`phone_number.ilike.%${pattern}%,phone_number.ilike.%${last10}%`)
+                .order("updated_at", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+              if (!phoneError && data) {
+                leadData = data as LeadRecord;
+                break; // Found a match, stop searching
+              }
+            }
+          }
+        }
+
+        // Note: leads table doesn't have policy_number column, so we skip this method
+
+        if (!cancelled && leadData) {
+          console.log("[assigned-lead-details] Found lead data for verification:", {
+            leadId: leadData.id,
+            hasStreetAddress: !!getString(leadData, "street_address"),
+            hasDateOfBirth: !!getString(leadData, "date_of_birth"),
+            hasAge: !!getString(leadData, "age"),
+          });
+          setFetchedLeadData(leadData);
+        } else if (!cancelled) {
+          console.log("[assigned-lead-details] No lead data found for verification panel", {
+            dealId,
+            policyNumber,
+            leadId,
+            hasDealData: !!dealData,
+            dealPhoneNumber: dealData?.phone_number,
+            dealSubmissionId: dealData?.monday_item_id,
+          });
+        }
+      } catch (e) {
+        console.error("[assigned-lead-details] Error fetching data for verification:", e);
+      } finally {
+        if (!cancelled) {
+          setFetchingData(false);
+        }
+      }
+    };
+
+    void fetchData();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPolicyView, lead, personalLead]);
+
   const verificationAutofillByFieldName = useMemo(() => {
-    const monday = selectedPolicyView?.raw ?? null;
+    // Prefer fetched database data over cached data
+    const monday = fetchedDealData ?? selectedPolicyView?.raw ?? null;
+    const leadRecord = fetchedLeadData ?? canonicalLeadRecord;
     const map: Record<string, string> = {};
 
-    const fromLead = (key: string) => getString(canonicalLeadRecord, key) ?? "";
+    const fromLead = (key: string) => getString(leadRecord, key) ?? "";
     const fromMonday = (key: keyof MondayComDeal) => {
       const v = monday ? (monday[key] as unknown) : null;
       return v == null ? "" : String(v);
     };
 
+    // Helper to get value from related deals (mondayDeals) when current deal has null/empty value
+    const fromRelatedDeals = (key: keyof MondayComDeal, currentValue: string): string => {
+      if (currentValue && currentValue.trim().length > 0) {
+        return currentValue; // Already has value, don't override
+      }
+      
+      // Look through related deals (mondayDeals) to find a non-null value
+      if (mondayDeals && mondayDeals.length > 0) {
+        for (const relatedDeal of mondayDeals) {
+          // Skip the current deal
+          if (monday && relatedDeal.id === monday.id) {
+            continue;
+          }
+          
+          const value = relatedDeal[key];
+          if (value != null) {
+            const strValue = typeof value === "number" ? String(value) : String(value);
+            if (strValue.trim().length > 0) {
+              return strValue;
+            }
+          }
+        }
+      }
+      
+      return "";
+    };
+
+    // Helper to get value from related leads when current lead has null/empty value
+    const fromRelatedLeads = (key: string, currentValue: string): string => {
+      if (currentValue && currentValue.trim().length > 0) {
+        return currentValue; // Already has value, don't override
+      }
+      
+      // Look through all personal leads to find a non-null value
+      if (allPersonalLeads && allPersonalLeads.length > 0) {
+        for (const relatedLead of allPersonalLeads) {
+          // Skip the current lead
+          if (leadRecord && typeof leadRecord.id === "string" && typeof relatedLead.id === "string" && relatedLead.id === leadRecord.id) {
+            continue;
+          }
+          
+          const value = getString(relatedLead, key);
+          if (value && value.trim().length > 0) {
+            return value;
+          }
+        }
+      }
+      
+      return "";
+    };
+
     map["lead_vendor"] = fromLead("lead_vendor") || fromMonday("call_center");
     map["customer_full_name"] = fromLead("customer_full_name") || fromMonday("ghl_name") || fromMonday("deal_name");
+    // Fill from related deals if current is empty
+    if (!map["customer_full_name"] || !map["customer_full_name"].trim()) {
+      map["customer_full_name"] = fromRelatedDeals("ghl_name", map["customer_full_name"]) || 
+                                  fromRelatedDeals("deal_name", map["customer_full_name"]);
+    }
+    
     map["street_address"] = fromLead("street_address");
+    map["street_address"] = fromRelatedLeads("street_address", map["street_address"]);
+    
     map["beneficiary_information"] = fromLead("beneficiary_information");
+    map["beneficiary_information"] = fromRelatedLeads("beneficiary_information", map["beneficiary_information"]);
+    
     map["billing_and_mailing_address_is_the_same"] = fromLead("billing_and_mailing_address_is_the_same");
+    map["billing_and_mailing_address_is_the_same"] = fromRelatedLeads("billing_and_mailing_address_is_the_same", map["billing_and_mailing_address_is_the_same"]);
+    
     map["date_of_birth"] = fromLead("date_of_birth");
+    map["date_of_birth"] = fromRelatedLeads("date_of_birth", map["date_of_birth"]);
+    
     map["age"] = fromLead("age");
+    map["age"] = fromRelatedLeads("age", map["age"]);
+    
     map["phone_number"] = fromLead("phone_number") || fromMonday("phone_number");
+    map["phone_number"] = fromRelatedDeals("phone_number", map["phone_number"]) || fromRelatedLeads("phone_number", map["phone_number"]);
+    
     map["social_security"] = fromLead("social_security");
+    map["social_security"] = fromRelatedLeads("social_security", map["social_security"]);
+    
     map["driver_license"] = fromLead("driver_license");
+    map["driver_license"] = fromRelatedLeads("driver_license", map["driver_license"]);
+    
     map["exp"] = fromLead("exp");
+    map["exp"] = fromRelatedLeads("exp", map["exp"]);
+    
     map["existing_coverage"] = fromLead("existing_coverage");
+    map["existing_coverage"] = fromRelatedLeads("existing_coverage", map["existing_coverage"]);
+    
     map["applied_to_life_insurance_last_two_years"] = fromLead("applied_to_life_insurance_last_two_years");
+    map["applied_to_life_insurance_last_two_years"] = fromRelatedLeads("applied_to_life_insurance_last_two_years", map["applied_to_life_insurance_last_two_years"]);
+    
     map["height"] = fromLead("height");
+    map["height"] = fromRelatedLeads("height", map["height"]);
+    
     map["weight"] = fromLead("weight");
+    map["weight"] = fromRelatedLeads("weight", map["weight"]);
+    
     map["doctors_name"] = fromLead("doctors_name");
+    map["doctors_name"] = fromRelatedLeads("doctors_name", map["doctors_name"]);
+    
     map["tobacco_use"] = fromLead("tobacco_use");
+    map["tobacco_use"] = fromRelatedLeads("tobacco_use", map["tobacco_use"]);
+    
     map["health_conditions"] = fromLead("health_conditions");
+    map["health_conditions"] = fromRelatedLeads("health_conditions", map["health_conditions"]);
+    
     map["medications"] = fromLead("medications");
+    map["medications"] = fromRelatedLeads("medications", map["medications"]);
+    
     map["insurance_application_details"] = fromLead("insurance_application_details");
+    map["insurance_application_details"] = fromRelatedLeads("insurance_application_details", map["insurance_application_details"]);
 
     map["carrier"] = fromLead("carrier") || fromMonday("carrier");
-    // Prefer values mapped per-policy from daily_deal_flow (selectedPolicyView) over lead-wide fields.
-    map["monthly_premium"] =
-      (selectedPolicyView?.monthlyPremium != null ? String(selectedPolicyView.monthlyPremium) : "") ||
-      fromLead("monthly_premium") ||
-      fromMonday("deal_value");
-    map["coverage_amount"] =
-      (selectedPolicyView?.coverage != null ? String(selectedPolicyView.coverage) : "") || fromLead("coverage_amount") || "";
+    map["carrier"] = fromRelatedDeals("carrier", map["carrier"]) || fromRelatedLeads("carrier", map["carrier"]);
+    
+    map["policy_number"] = selectedPolicyView?.policyNumber || fromMonday("policy_number") || fromLead("policy_number") || "";
+    map["policy_number"] = fromRelatedDeals("policy_number", map["policy_number"]) || fromRelatedLeads("policy_number", map["policy_number"]);
+    
+    map["product_type"] = fromMonday("policy_type") || fromLead("product_type") || "";
+    map["product_type"] = fromRelatedDeals("policy_type", map["product_type"]) || fromRelatedLeads("product_type", map["product_type"]);
+    
+    map["agent"] = selectedPolicyView?.agentName || fromMonday("sales_agent") || fromLead("agent") || "";
+    map["agent"] = fromRelatedDeals("sales_agent", map["agent"]) || fromRelatedLeads("agent", map["agent"]);
+    
+    // Prefer values from the selected policy (selectedPolicyView) first, then Monday.com deal data, then lead-level data
+    // This ensures we use the correct policy-specific values, not values from other policies
+    // IMPORTANT: For monthly_premium, we need to match what the policy card displays.
+    // The policy card shows selectedPolicyView.monthlyPremium, which is calculated as:
+    // - If daily_deal_flow exists: use ddf.monthly_premium
+    // - Else: use deal.deal_value
+    // So we should use the same logic to ensure consistency between policy card and verification panel.
+    let monthlyPremiumValue = "";
+    
+    // Priority 1: Use selectedPolicyView.monthlyPremium (this is what the policy card displays)
+    // This ensures the verification panel matches what's shown in the policy card
+    if (selectedPolicyView?.monthlyPremium != null) {
+      monthlyPremiumValue = String(selectedPolicyView.monthlyPremium);
+      console.log("[verification-autofill] Using monthly_premium from selectedPolicyView.monthlyPremium (policy card value):", monthlyPremiumValue);
+    }
+    // Priority 2: Use deal_value from fetchedDealData (most reliable, directly from DB)
+    else if (fetchedDealData && typeof fetchedDealData.deal_value === "number") {
+      monthlyPremiumValue = String(fetchedDealData.deal_value);
+      console.log("[verification-autofill] Using monthly_premium from fetchedDealData.deal_value:", monthlyPremiumValue);
+    }
+    // Priority 3: Use deal_value from selectedPolicyView.raw (the deal object - this is the selected deal)
+    else if (selectedPolicyView?.raw && typeof selectedPolicyView.raw.deal_value === "number") {
+      monthlyPremiumValue = String(selectedPolicyView.raw.deal_value);
+      console.log("[verification-autofill] Using monthly_premium from selectedPolicyView.raw.deal_value:", monthlyPremiumValue);
+    }
+    // Priority 4: Use deal_value from monday (fallback)
+    else if (monday && typeof monday.deal_value === "number") {
+      monthlyPremiumValue = String(monday.deal_value);
+      console.log("[verification-autofill] Using monthly_premium from monday.deal_value:", monthlyPremiumValue);
+    }
+    // Priority 5: Check lead data
+    else {
+      monthlyPremiumValue = fromLead("monthly_premium") || "";
+      console.log("[verification-autofill] Using monthly_premium from lead:", monthlyPremiumValue || "empty");
+    }
+    
+    // IMPORTANT: Do NOT use fromRelatedDeals for monthly_premium - each deal has its own monthly premium
+    // Only use related leads if we have absolutely no value for this specific deal
+    map["monthly_premium"] = monthlyPremiumValue || fromRelatedLeads("monthly_premium", monthlyPremiumValue);
+    
+    // IMPORTANT: For coverage_amount, we need to match what the policy card displays.
+    // The policy card shows selectedPolicyView.coverage, which is calculated from daily_deal_flow or deal.cc_value.
+    // So we should use the same logic to ensure consistency between policy card and verification panel.
+    let coverageAmountValue = "";
+    
+    // Priority 1: Use selectedPolicyView.coverage (this is what the policy card displays)
+    // This ensures the verification panel matches what's shown in the policy card
+    if (selectedPolicyView?.coverage != null) {
+      coverageAmountValue = String(selectedPolicyView.coverage);
+      console.log("[verification-autofill] Using coverage_amount from selectedPolicyView.coverage (policy card value):", coverageAmountValue);
+    }
+    // Priority 2: Use cc_value from fetchedDealData (most reliable, directly from DB)
+    else if (fetchedDealData && typeof fetchedDealData.cc_value === "number") {
+      coverageAmountValue = String(fetchedDealData.cc_value);
+      console.log("[verification-autofill] Using coverage_amount from fetchedDealData.cc_value:", coverageAmountValue);
+    }
+    // Priority 3: Use cc_value from selectedPolicyView.raw (the deal object)
+    else if (selectedPolicyView?.raw && typeof selectedPolicyView.raw.cc_value === "number") {
+      coverageAmountValue = String(selectedPolicyView.raw.cc_value);
+      console.log("[verification-autofill] Using coverage_amount from selectedPolicyView.raw.cc_value:", coverageAmountValue);
+    }
+    // Priority 4: Use cc_value from monday (fallback)
+    else if (monday && typeof monday.cc_value === "number") {
+      coverageAmountValue = String(monday.cc_value);
+      console.log("[verification-autofill] Using coverage_amount from monday.cc_value:", coverageAmountValue);
+    }
+    // Priority 5: Check lead data
+    else {
+      coverageAmountValue = fromLead("coverage_amount") || "";
+      console.log("[verification-autofill] Using coverage_amount from lead:", coverageAmountValue || "empty");
+    }
+    
+    // IMPORTANT: Do NOT use fromRelatedDeals for coverage_amount - each deal has its own coverage
+    // Only use related leads if we have absolutely no value for this specific deal
+    map["coverage_amount"] = coverageAmountValue || fromRelatedLeads("coverage_amount", coverageAmountValue);
+    
     map["draft_date"] =
       (selectedPolicyView?.initialDraftDate != null ? String(selectedPolicyView.initialDraftDate) : "") ||
       fromLead("draft_date") ||
       "";
+    map["draft_date"] = fromRelatedLeads("draft_date", map["draft_date"]);
+    
     map["first_draft"] = fromLead("first_draft");
+    map["first_draft"] = fromRelatedLeads("first_draft", map["first_draft"]);
+    
     map["institution_name"] = fromLead("institution_name");
+    map["institution_name"] = fromRelatedLeads("institution_name", map["institution_name"]);
+    
     map["beneficiary_routing"] = fromLead("beneficiary_routing");
+    map["beneficiary_routing"] = fromRelatedLeads("beneficiary_routing", map["beneficiary_routing"]);
+    
     map["beneficiary_account"] = fromLead("beneficiary_account");
+    map["beneficiary_account"] = fromRelatedLeads("beneficiary_account", map["beneficiary_account"]);
+    
     map["account_type"] = fromLead("account_type");
+    map["account_type"] = fromRelatedLeads("account_type", map["account_type"]);
 
     map["city"] = fromLead("city");
+    map["city"] = fromRelatedLeads("city", map["city"]);
+    
     map["state"] = fromLead("state");
+    map["state"] = fromRelatedLeads("state", map["state"]);
+    
     map["zip_code"] = fromLead("zip_code");
+    map["zip_code"] = fromRelatedLeads("zip_code", map["zip_code"]);
+    
     map["birth_state"] = fromLead("birth_state");
+    map["birth_state"] = fromRelatedLeads("birth_state", map["birth_state"]);
+    
     map["call_phone_landline"] = fromLead("call_phone_landline");
+    map["call_phone_landline"] = fromRelatedLeads("call_phone_landline", map["call_phone_landline"]);
+    
     map["additional_notes"] = fromLead("additional_notes") || getString(lead, "notes") || "";
+    map["additional_notes"] = fromRelatedLeads("additional_notes", map["additional_notes"]) || fromRelatedLeads("notes", map["additional_notes"]);
 
     return map;
-  }, [canonicalLeadRecord, lead, selectedPolicyView]);
+  }, [canonicalLeadRecord, lead, selectedPolicyView, fetchedDealData, fetchedLeadData, mondayDeals, allPersonalLeads]);
 
   useEffect(() => {
     const leadIdForVerification =
@@ -1362,15 +1978,27 @@ export function useAssignedLeadDetails() {
         for (const r of rows) {
           const id = typeof r["id"] === "string" ? (r["id"] as string) : null;
           if (!id) continue;
+          const fieldName = typeof r["field_name"] === "string" ? (r["field_name"] as string) : "";
           const vv = typeof r["verified_value"] === "string" ? (r["verified_value"] as string) : null;
           const ov = typeof r["original_value"] === "string" ? (r["original_value"] as string) : null;
+          
+          // For monthly_premium and coverage_amount, always prefer our autofill value over original_value from database
+          // because these values should match what the policy card displays, which comes from selectedPolicyView
+          // The original_value might come from daily_deal_flow which could be from a different entry or outdated
+          if (fieldName === "monthly_premium" || fieldName === "coverage_amount") {
+            const autofill = verificationAutofillByFieldName[fieldName] || "";
+            if (autofill && autofill.trim().length > 0) {
+              map[id] = autofill;
+              continue;
+            }
+          }
+          
           const stored = (vv ?? ov ?? "").toString();
           if (stored.trim().length) {
             map[id] = stored;
             continue;
           }
 
-          const fieldName = typeof r["field_name"] === "string" ? (r["field_name"] as string) : "";
           const autofill = fieldName ? verificationAutofillByFieldName[fieldName] : "";
           map[id] = (autofill ?? "").toString();
         }

@@ -13,6 +13,7 @@ import { Loader2, Plus } from "lucide-react";
 import { getGhlStages, type GhlStageOption } from "../../../lib/retention-assignment.logic";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
+import { MultiSelect } from "@/components/ui/multi-select";
 import {
   BulkAssignAllocationRow,
   type BulkAssignAgentOption,
@@ -60,6 +61,11 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
 
   // multi-select stages support
   const [selectedStages, setSelectedStages] = React.useState<string[]>([]);
+  
+  // carrier filter support
+  const [carrierFilter, setCarrierFilter] = React.useState<string[]>([]);
+  const [availableCarriers, setAvailableCarriers] = React.useState<string[]>([]);
+  const [loadingCarriers, setLoadingCarriers] = React.useState(false);
 
   const [loadingGroup, setLoadingGroup] = React.useState(false);
   const [groupCount, setGroupCount] = React.useState<number | null>(null);
@@ -113,6 +119,7 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
     setAllocations([{ agentId: "", percent: 100 }]);
     setLoadingGroup(false);
     setSaving(false);
+    setCarrierFilter([]);
   }, []);
 
   React.useEffect(() => {
@@ -120,6 +127,36 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
       reset();
     }
   }, [open, reset]);
+
+  const loadAvailableCarriers = React.useCallback(async () => {
+    setLoadingCarriers(true);
+    try {
+      const { data, error } = await supabase
+        .from("monday_com_deals")
+        .select("carrier")
+        .eq("is_active", true)
+        .not("carrier", "is", null);
+
+      if (error) {
+        console.error("[bulk-assign] loadAvailableCarriers error", error);
+        return;
+      }
+
+      const carriers = Array.from(
+        new Set(
+          (data ?? [])
+            .map((d) => (typeof d.carrier === "string" ? d.carrier.trim() : null))
+            .filter((c): c is string => c != null && c.length > 0)
+        )
+      ).sort();
+
+      setAvailableCarriers(carriers);
+    } catch (error) {
+      console.error("[bulk-assign] loadAvailableCarriers error", error);
+    } finally {
+      setLoadingCarriers(false);
+    }
+  }, []);
 
   const loadGroupLeads = React.useCallback(async () => {
     if (!selectedStages || selectedStages.length === 0) {
@@ -137,13 +174,19 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
       const allRows: DealRow[] = [];
 
       while (true) {
-        const dealsQuery = supabase
+        let dealsQuery = supabase
           .from("monday_com_deals")
           .select("id, monday_item_id", { count: "exact" })
           .in("ghl_stage", selectedStages)
+          .eq("is_active", true)
           .not("monday_item_id", "is", null)
           .order("last_updated", { ascending: false, nullsFirst: false })
           .range(offset, offset + PAGE_SIZE - 1);
+
+        // Apply carrier filter if selected
+        if (carrierFilter.length > 0) {
+          dealsQuery = dealsQuery.in("carrier", carrierFilter);
+        }
 
         const { data: dealRows, error: dealsError, count } = await dealsQuery;
         if (dealsError) throw dealsError;
@@ -208,32 +251,38 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
     } finally {
       setLoadingGroup(false);
     }
-  }, [selectedStages]);
+  }, [selectedStages, carrierFilter]);
+
+  const loadStages = React.useCallback(async () => {
+    setLoadingStages(true);
+    try {
+      const data = await getGhlStages(carrierFilter.length > 0 ? carrierFilter : undefined);
+      setStages(data);
+    } catch (e) {
+      console.error("[bulk-assign] load stages error", e);
+    } finally {
+      setLoadingStages(false);
+    }
+  }, [carrierFilter]);
 
   React.useEffect(() => {
     if (!open) return;
 
     // load GHL stages when modal opens
-    const loadStages = async () => {
-      setLoadingStages(true);
-      try {
-        const data = await getGhlStages();
-        setStages(data);
-      } catch (e) {
-        console.error("[bulk-assign] load stages error", e);
-      } finally {
-        setLoadingStages(false);
-      }
-    };
-
     void loadStages();
-    // loadGroupLeads will be called when selectedStages changes
-  }, [open]);
+    void loadAvailableCarriers();
+    // loadGroupLeads will be called when selectedStages or carrierFilter changes
+  }, [open, loadAvailableCarriers, loadStages]);
 
   React.useEffect(() => {
-    // whenever selected stages change, reload
+    // whenever carrier filter changes, reload stages to update counts
+    void loadStages();
+  }, [carrierFilter, loadStages]);
+
+  React.useEffect(() => {
+    // whenever selected stages or carrier filter changes, reload
     void loadGroupLeads();
-  }, [selectedStages, loadGroupLeads]);
+  }, [selectedStages, carrierFilter, loadGroupLeads]);
 
   const onAddAgent = () => {
     setAllocations((prev) => [...prev, { agentId: "", percent: 0 }]);
@@ -297,6 +346,38 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
     setSaving(true);
     setAssigning(true);
     try {
+      // Get current manager's profile ID (the person doing the assignment)
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) {
+        toast({
+          title: "Error",
+          description: "Unable to identify current user. Please refresh and try again.",
+          variant: "destructive",
+        });
+        setSaving(false);
+        setAssigning(false);
+        return;
+      }
+
+      const { data: managerProfile, error: profileError } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("user_id", session.user.id)
+        .single();
+
+      if (profileError || !managerProfile?.id) {
+        toast({
+          title: "Error",
+          description: "Unable to load manager profile. Please refresh and try again.",
+          variant: "destructive",
+        });
+        setSaving(false);
+        setAssigning(false);
+        return;
+      }
+
+      const managerProfileId = managerProfile.id as string;
+
       const basePlan = buildDealIdPlan(unassignedDealIds, cleanedAllocations, evenDistribution);
       if (basePlan.length === 0) {
         toast({
@@ -304,6 +385,8 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
           description: "No deals were selected for bulk assignment.",
           variant: "destructive",
         });
+        setSaving(false);
+        setAssigning(false);
         return;
       }
 
@@ -479,7 +562,7 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
         const payload = batch.map((p) => ({
           deal_id: p.deal_id,
           assignee_profile_id: p.assignee_profile_id,
-          assigned_by_profile_id: p.assignee_profile_id,
+          assigned_by_profile_id: managerProfileId, // Manager who is doing the assignment
           status: "active",
           assigned_at: now,
         }));
@@ -550,17 +633,55 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
         </DialogHeader>
 
         <div className="space-y-5 py-2">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <div className="text-sm font-medium">Carrier(s)</div>
+              <MultiSelect
+                options={availableCarriers}
+                selected={carrierFilter}
+                onChange={(selected) => {
+                  setCarrierFilter(selected);
+                }}
+                placeholder={loadingCarriers ? "Loading carriers..." : "All Carriers"}
+                className="w-full"
+                showAllOption={true}
+                allOptionLabel="All Carriers"
+                disabled={loadingCarriers}
+              />
+              {carrierFilter.length > 0 && (
+                <div className="text-xs text-muted-foreground">
+                  {carrierFilter.length} carrier{carrierFilter.length !== 1 ? "s" : ""} selected
+                </div>
+              )}
+            </div>
             <div className="space-y-2 md:col-span-2">
-              <div className="text-sm font-medium">GHL Stage(s)</div>
-              <div className="rounded-md border p-2 max-h-64 overflow-auto w-full">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-sm font-medium">Stages</div>
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium">GHL Stage(s)</div>
+                {loadingStages && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Updating counts...
+                  </div>
+                )}
+              </div>
+              <div className="rounded-md border bg-card p-3 max-h-64 overflow-auto w-full">
+                <div className="flex items-center justify-between mb-3 pb-2 border-b">
+                  <div className="text-sm font-semibold">Available Stages</div>
                   <div className="flex gap-2">
-                    <Button size="sm" variant="ghost" onClick={() => setSelectedStages(stages.map((s) => s.stage))}>
+                    <Button 
+                      size="sm" 
+                      variant="ghost" 
+                      onClick={() => setSelectedStages(stages.map((s) => s.stage))}
+                      disabled={loadingStages || stages.length === 0}
+                    >
                       Select all
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setSelectedStages([])}>
+                    <Button 
+                      size="sm" 
+                      variant="ghost" 
+                      onClick={() => setSelectedStages([])}
+                      disabled={loadingStages}
+                    >
                       Clear
                     </Button>
                   </div>
@@ -568,25 +689,44 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
 
                 <div>
                   {loadingStages ? (
-                    <div className="flex items-center justify-center p-4">
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                    <div className="flex items-center justify-center p-8">
+                      <div className="flex flex-col items-center gap-2">
+                        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                        <div className="text-xs text-muted-foreground">Loading stages...</div>
+                      </div>
+                    </div>
+                  ) : stages.length === 0 ? (
+                    <div className="flex items-center justify-center p-8">
+                      <div className="text-sm text-muted-foreground text-center">
+                        {carrierFilter.length > 0 
+                          ? "No stages found for selected carriers" 
+                          : "No stages available"}
+                      </div>
                     </div>
                   ) : (
-                    stages.map((s) => (
-                      <label key={s.stage} className="flex items-center justify-between p-2">
-                        <div className="flex items-center gap-2">
-                          <Checkbox
-                            checked={selectedStages.includes(s.stage)}
-                            onCheckedChange={(c) => {
-                              const checked = !!c;
-                              setSelectedStages((prev) => (checked ? [...prev, s.stage] : prev.filter((x) => x !== s.stage)));
-                            }}
-                          />
-                          <div>{s.stage}</div>
-                        </div>
-                        <div className="text-xs text-muted-foreground">{s.count}</div>
-                      </label>
-                    ))
+                    <div className="space-y-1">
+                      {stages.map((s) => (
+                        <label 
+                          key={s.stage} 
+                          className="flex items-center justify-between p-2.5 rounded-md hover:bg-accent/50 transition-colors cursor-pointer"
+                        >
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <Checkbox
+                              checked={selectedStages.includes(s.stage)}
+                              onCheckedChange={(c) => {
+                                const checked = !!c;
+                                setSelectedStages((prev) => (checked ? [...prev, s.stage] : prev.filter((x) => x !== s.stage)));
+                              }}
+                              disabled={loadingStages}
+                            />
+                            <div className="text-sm truncate flex-1">{s.stage}</div>
+                          </div>
+                          <div className="ml-3 px-2 py-1 rounded-full bg-primary/10 text-primary text-xs font-semibold whitespace-nowrap">
+                            {s.count.toLocaleString()}
+                          </div>
+                        </label>
+                      ))}
+                    </div>
                   )}
                 </div>
               </div>
@@ -595,31 +735,58 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
 
           </div>
 
-          <div className="rounded-md border bg-muted/10 p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-sm">
-                <div className="font-medium">Selected stage summary</div>
-                <div className="text-muted-foreground">
+          <div className="rounded-md border bg-gradient-to-r from-muted/20 to-muted/10 p-4">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex-1">
+                <div className="text-sm font-semibold mb-1">Selection Summary</div>
+                <div className="text-sm text-muted-foreground">
                   {loadingGroup ? (
-                    <span className="inline-flex items-center">
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading...
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" /> 
+                      <span>Loading leads...</span>
                     </span>
                   ) : selectedStages.length > 0 ? (
-                    <>
-                      Total leads in selected stages: <span className="font-medium">{groupCount ?? "—"}</span>
-                      <span className="mx-2">•</span>
-                      Already assigned: <span className="font-medium">{assignedCount}</span>
-                      <span className="mx-2">•</span>
-                      Unassigned: <span className="font-medium">{unassignedDealIds.length}</span>
-                    </>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">Total in stages:</span>
+                        <span className="font-semibold text-foreground">{groupCount?.toLocaleString() ?? "—"}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">Already assigned:</span>
+                        <span className="font-semibold text-amber-600 dark:text-amber-500">{assignedCount.toLocaleString()}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">Available:</span>
+                        <span className="font-semibold text-emerald-600 dark:text-emerald-500">{unassignedDealIds.length.toLocaleString()}</span>
+                      </div>
+                      {carrierFilter.length > 0 && (
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="text-muted-foreground">(filtered by {carrierFilter.length} carrier{carrierFilter.length !== 1 ? "s" : ""})</span>
+                        </div>
+                      )}
+                    </div>
                   ) : (
-                    "Select one or more GHL stages to load leads."
+                    <div className="text-muted-foreground">
+                      Select one or more GHL stages to load leads.
+                      {carrierFilter.length > 0 && " Carrier filter is active."}
+                    </div>
                   )}
                 </div>
               </div>
-              <Button variant="outline" onClick={loadGroupLeads} disabled={selectedStages.length === 0 || loadingGroup || saving}>
-                {loadingGroup ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Reload
+              <Button 
+                variant="outline" 
+                onClick={loadGroupLeads} 
+                disabled={selectedStages.length === 0 || loadingGroup || saving}
+                className="shrink-0"
+              >
+                {loadingGroup ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Loading...
+                  </>
+                ) : (
+                  "Reload"
+                )}
               </Button>
             </div>
           </div>

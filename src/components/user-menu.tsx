@@ -78,14 +78,11 @@ export function UserMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="w-full justify-start gap-2 px-2">
-          <Avatar className="size-7">
+        <Button variant="ghost" className="h-9 w-9 rounded-full p-0">
+          <Avatar className="size-8">
             {avatarUrl && <AvatarImage src={avatarUrl} alt={userName ?? "Account"} />}
-            <AvatarFallback>{(userName ?? "?").slice(0, 1)}</AvatarFallback>
+            <AvatarFallback className="text-xs">{(userName ?? "?").slice(0, 1)}</AvatarFallback>
           </Avatar>
-          <span className="min-w-0 flex-1 truncate text-left text-sm">
-            {userName ?? "Account"}
-          </span>
         </Button>
       </DropdownMenuTrigger>
 

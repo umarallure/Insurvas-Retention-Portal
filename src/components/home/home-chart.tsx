@@ -1,12 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { eachDayOfInterval, eachMonthOfInterval, eachWeekOfInterval, format } from "date-fns";
+import { format } from "date-fns";
 import type { DateRange } from "react-day-picker";
 
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import type { Period } from "@/types";
-import { randomInt } from "@/lib/random";
+import { getChartData } from "@/lib/dashboard-stats";
 
 import {
   Area,
@@ -31,35 +31,76 @@ const formatMoney = new Intl.NumberFormat("en", {
 
 export function HomeChart({ period, range }: { period: Period; range: DateRange }) {
   const [data, setData] = React.useState<RecordPoint[]>([]);
+  const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {
-    const start = range.from ?? new Date();
-    const end = range.to ?? new Date();
+    let cancelled = false;
 
-    const dates = (period === "daily"
-      ? eachDayOfInterval({ start, end })
-      : period === "weekly"
-        ? eachWeekOfInterval({ start, end })
-        : eachMonthOfInterval({ start, end })) as Date[];
+    const fetchChartData = async () => {
+      setLoading(true);
+      try {
+        const chartData = await getChartData(period, range);
+        if (cancelled) return;
+        setData(chartData);
+      } catch (error) {
+        console.error("[HomeChart] Error fetching chart data:", error);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
 
-    const min = 1000;
-    const max = 10000;
+    if (range.from && range.to) {
+      void fetchChartData();
+    } else {
+      setData([]);
+      setLoading(false);
+    }
 
-    setData(dates.map((d) => ({ date: d, amount: randomInt(min, max) })));
-  }, [period, range.from, range.to]);
+    return () => {
+      cancelled = true;
+    };
+  }, [period, range]);
 
-  const total = React.useMemo(() => data.reduce((acc, d) => acc + d.amount, 0), [data]);
+  const total = data.reduce((sum, point) => sum + point.amount, 0);
 
   const labelForDate = (d: Date) => {
     if (period === "monthly") return format(d, "MMM yyy");
     return format(d, "d MMM");
   };
 
+  if (loading) {
+    return (
+      <Card className="mt-6">
+        <CardHeader>
+          <div>
+            <div className="text-xs uppercase text-muted-foreground">Deal Value Chart</div>
+            <div className="mt-1 text-sm text-muted-foreground">Loading chart data...</div>
+          </div>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  if (data.length === 0) {
+    return (
+      <Card className="mt-6">
+        <CardHeader>
+          <div>
+            <div className="text-xs uppercase text-muted-foreground">Deal Value Chart</div>
+            <div className="mt-1 text-sm text-muted-foreground">No data available for selected period</div>
+          </div>
+        </CardHeader>
+      </Card>
+    );
+  }
+
   return (
     <Card className="mt-6">
       <CardHeader>
         <div>
-          <div className="text-xs uppercase text-muted-foreground">Revenue</div>
+          <div className="text-xs uppercase text-muted-foreground">Total Deal Value</div>
           <div className="mt-1 text-3xl font-semibold text-foreground">{formatMoney(total)}</div>
         </div>
       </CardHeader>

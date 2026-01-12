@@ -1,7 +1,0 @@
-- [ ] Step 0: Progress Tracking (Create and maintain plan.md)
-- [ ] Step 1: Pre-requisites & Environment Setup
-- [ ] Step 2: Database Initialization (Supabase)
-- [ ] Step 3: Helper Libraries (Redis + Supabase clients)
-- [ ] Step 4: The Producer (Next.js API Route)
-- [ ] Step 5: The Consumer (Worker Script)
-- [ ] Step 6: The Frontend (Leads Page)

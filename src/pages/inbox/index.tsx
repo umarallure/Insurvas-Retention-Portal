@@ -25,10 +25,9 @@ export default function InboxPage() {
   React.useEffect(() => {
     let cancelled = false;
 
+    // Inbox is not yet implemented - show empty state
     (async () => {
-      const res = await fetch("https://dashboard-template.nuxt.dev/api/mails");
-      const json = (await res.json()) as Mail[];
-      if (!cancelled) setMails(json);
+      if (!cancelled) setMails([]);
     })();
 
     return () => {
@@ -80,11 +79,17 @@ export default function InboxPage() {
           </Tabs>
         </div>
 
-        <InboxList
-          mails={filteredMails}
-          selectedMail={selectedMail}
-          onSelect={(mail) => setSelectedMail(mail)}
-        />
+        {filteredMails.length === 0 ? (
+          <div className="flex flex-1 items-center justify-center p-8 text-center">
+            <div className="text-sm text-muted-foreground">No messages yet</div>
+          </div>
+        ) : (
+          <InboxList
+            mails={filteredMails}
+            selectedMail={selectedMail}
+            onSelect={(mail) => setSelectedMail(mail)}
+          />
+        )}
       </div>
 
       {/* Desktop detail panel */}

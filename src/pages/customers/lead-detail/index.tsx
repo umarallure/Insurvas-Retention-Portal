@@ -127,6 +127,7 @@ export default function LeadDetailPage() {
         const res = await supabase
           .from("monday_com_deals")
           .select("*")
+          .eq("is_active", true)
           .eq("id", numericId)
           .maybeSingle();
 

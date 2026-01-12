@@ -71,14 +71,6 @@ export const DISPOSITION_METADATA: Record<Disposition, DispositionMetadata> = {
     label: "Chargeback DQ",
     description: "Move to chargeback disqualified",
   },
-  "Submitted": {
-    requiresNotes: false,
-    requiresCallback: false,
-    affectsGHL: true,
-    licensedAgentOnly: true,
-    label: "Submitted",
-    description: "Application has been submitted",
-  },
 };
 
 // Map policy statuses to available RA dispositions
@@ -129,35 +121,30 @@ export const LA_DISPOSITIONS_BY_STATUS: Record<PolicyStatus, Disposition[]> = {
     "Not Interested",
     "Chargeback DQ",
     "DQ",
-    "Submitted",
   ],
   "Pending Lapse": [
     "Needs Callback",
     "Not Interested",
     "Chargeback DQ",
     "DQ",
-    "Submitted",
   ],
   "Chargeback": [
     "Needs Callback",
     "Not Interested",
     "Chargeback DQ",
     "DQ",
-    "Submitted",
   ],
   "Needs to be Sold": [
     "Needs Callback",
     "Not Interested",
     "Chargeback DQ",
     "DQ",
-    "Submitted",
   ],
   "Pending Manual Action": [
     "Needs Callback",
     "Not Interested",
     "Chargeback DQ",
     "DQ",
-    "Submitted",
   ],
 };
 

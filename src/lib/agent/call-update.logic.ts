@@ -132,7 +132,7 @@ export function useCallUpdate() {
           .from("information_schema.columns")
           .select("column_name")
           .eq("table_schema", "public")
-          .eq("table_name", "retention_deal_flow");
+          .eq("table_name", "daily_deal_flow");
 
         if (error) throw error;
         if (cancelled) return;
@@ -487,9 +487,12 @@ export function useCallUpdate() {
       try {
         let q = supabase.from("monday_com_deals").select("*");
         if (dealId != null) {
+          // Allow viewing by dealId even if inactive (agent may be working on assigned deal)
           q = q.eq("id", dealId);
         } else {
+          // When searching by policy number, only show active deals
           q = q
+            .eq("is_active", true)
             .eq("policy_number", policyNumber)
             .order("last_updated", { ascending: false, nullsFirst: false })
             .order("updated_at", { ascending: false, nullsFirst: false })
@@ -614,7 +617,6 @@ export function useCallUpdate() {
           lead_vendor: leadVendorForInsert,
           insured_name: getString(lead, "customer_full_name"),
           retention_agent: retentionAgent || null,
-          is_retention_call: true,
           from_callback: true,
         };
 

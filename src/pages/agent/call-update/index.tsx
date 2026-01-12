@@ -170,7 +170,7 @@ export default function CallUpdatePage() {
             <div className="h-2 w-40 rounded-full bg-muted overflow-hidden">
               <div className="h-2 bg-primary" style={{ width: `${progress}%` }} />
             </div>
-            <Badge variant="secondary" className="bg-amber-100 text-amber-800 border-amber-200">
+            <Badge variant="secondary" className="bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800">
               Just Started
             </Badge>
           </div>
@@ -200,7 +200,7 @@ export default function CallUpdatePage() {
                 {verificationProgress.verified} of {verificationProgress.total} fields verified
               </span>
               <span className="text-primary font-semibold">{progress}%</span>
-              <Badge variant="outline" className="bg-amber-100 text-amber-800 border-amber-200">Just Started</Badge>
+              <Badge variant="outline" className="bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800">Just Started</Badge>
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -228,7 +228,7 @@ export default function CallUpdatePage() {
                   return (
                     <div
                       key={itemId}
-                      className="rounded-lg border bg-card px-3 py-2 shadow-[0_1px_0_rgba(0,0,0,0.02)] space-y-2"
+                      className="rounded-lg border bg-card px-3 py-2 shadow-[0_1px_0_rgba(0,0,0,0.02)] dark:shadow-[0_1px_0_rgba(255,255,255,0.05)] space-y-2"
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-3 min-w-0">
@@ -246,7 +246,7 @@ export default function CallUpdatePage() {
                         </div>
 
                         {checked ? (
-                          <Badge variant="outline" className="border-green-500/30 text-green-700 bg-green-500/10">
+                          <Badge variant="outline" className="border-green-500/30 dark:border-green-500/50 text-green-700 dark:text-green-300 bg-green-500/10 dark:bg-green-500/20">
                             Verified
                           </Badge>
                         ) : (
@@ -267,13 +267,13 @@ export default function CallUpdatePage() {
               </div>
             )}
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="secondary" className="bg-red-100 text-red-700 border-red-200">
+              <Button size="sm" variant="secondary" className="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800">
                 Call Dropped
               </Button>
-              <Button size="sm" variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">
+              <Button size="sm" variant="secondary" className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700">
                 Call Done
               </Button>
-              <Button size="sm" variant="secondary" className="bg-indigo-100 text-indigo-700 border-indigo-200">
+              <Button size="sm" variant="secondary" className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800">
                 Transfer to Other Licensed Agent
               </Button>
             </div>
@@ -428,7 +428,7 @@ export default function CallUpdatePage() {
               </div>
 
               {applicationSubmitted === "yes" ? (
-                <Card className="shadow-none border border-emerald-100 bg-emerald-50">
+                <Card className="shadow-none border border-emerald-100 dark:border-emerald-900/50 bg-emerald-50 dark:bg-emerald-900/20">
                   <CardHeader>
                     <CardTitle>Application Submitted Details</CardTitle>
                     <CardDescription>Capture submission specifics.</CardDescription>

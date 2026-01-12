@@ -50,6 +50,7 @@ type DealFields = {
   policy_type: string | null
   group_title: string | null
   group_color: string | null
+  // Note: is_active is automatically set by database trigger based on exclusion rules
 }
 
 function toNumber(v: unknown): number | null {

@@ -160,11 +160,126 @@ export function CarrierRequirementsWorkflow({
       return;
     }
 
-    const submissionId = getString(lead, "submission_id") ?? null;
+    // Verify that this deal is assigned to the current agent
+    if (deal.dealId) {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (!session?.user) {
+          toast({ 
+            title: "Unauthorized", 
+            description: "You must be logged in to submit workflows", 
+            variant: "destructive" 
+          });
+          return;
+        }
+
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("id")
+          .eq("user_id", session.user.id)
+          .maybeSingle();
+
+        if (profileError || !profile) {
+          toast({ 
+            title: "Error", 
+            description: "Failed to verify your profile", 
+            variant: "destructive" 
+          });
+          return;
+        }
+
+        // Check if this deal is assigned to the current agent
+        const { data: assignment, error: assignmentError } = await supabase
+          .from("retention_assigned_leads")
+          .select("id")
+          .eq("deal_id", deal.dealId)
+          .eq("assignee_profile_id", profile.id)
+          .eq("status", "active")
+          .maybeSingle();
+
+        if (assignmentError) {
+          console.error("[carrier-requirements] Error checking assignment:", assignmentError);
+          toast({ 
+            title: "Error", 
+            description: "Failed to verify assignment", 
+            variant: "destructive" 
+          });
+          return;
+        }
+
+        if (!assignment) {
+          console.warn("[carrier-requirements] Unauthorized submission attempt - deal not assigned to agent", {
+            dealId: deal.dealId,
+            profileId: profile.id
+          });
+          toast({ 
+            title: "Unauthorized", 
+            description: "This lead is not assigned to you. You cannot submit workflows for leads that are not assigned to you.", 
+            variant: "destructive" 
+          });
+          return;
+        }
+      } catch (authError) {
+        console.error("[carrier-requirements] Error during authorization check:", authError);
+        toast({ 
+          title: "Error", 
+          description: "Failed to verify authorization", 
+          variant: "destructive" 
+        });
+        return;
+      }
+    }
+
+    // Try multiple sources for submission_id
+    let submissionId = getString(lead, "submission_id") ?? null;
+    
+    // If not in lead, try from deal's monday_item_id (which is often the submission_id)
+    if (!submissionId && deal.raw) {
+      const mondayItemId = typeof deal.raw.monday_item_id === "string" ? deal.raw.monday_item_id.trim() : null;
+      if (mondayItemId) {
+        submissionId = mondayItemId;
+      }
+    }
+    
+    // If still not found and we have dealId, try to fetch from database
+    if (!submissionId && deal.dealId) {
+      try {
+        const { data: dealData } = await supabase
+          .from("monday_com_deals")
+          .select("monday_item_id")
+          .eq("id", deal.dealId)
+          .maybeSingle();
+        
+        if (dealData && typeof dealData.monday_item_id === "string") {
+          const mondayItemId = dealData.monday_item_id.trim();
+          if (mondayItemId) {
+            submissionId = mondayItemId;
+          }
+        }
+      } catch (fetchError) {
+        console.warn("[carrier-requirements] Error fetching monday_item_id:", fetchError);
+      }
+    }
+    
     if (!submissionId) {
-      toast({ title: "Missing submission", description: "Cannot save call result without submission_id.", variant: "destructive" });
+      console.error("[carrier-requirements] Missing submission_id:", {
+        leadHasSubmissionId: !!getString(lead, "submission_id"),
+        dealHasRaw: !!deal.raw,
+        dealRawHasMondayItemId: deal.raw && typeof deal.raw.monday_item_id === "string",
+        dealId: deal.dealId,
+      });
+      toast({ 
+        title: "Missing submission", 
+        description: "Cannot save call result without submission_id. The policy may be missing a Monday.com item ID. Please contact support.", 
+        variant: "destructive" 
+      });
       return;
     }
+    
+    console.log("[carrier-requirements] Using submission_id:", submissionId);
 
     setSubmittingShortForm(true);
     try {
@@ -192,25 +307,134 @@ export function CarrierRequirementsWorkflow({
         },
       });
 
+      // Extract additional data from deal and raw policy data
+      const rawDeal = deal.raw ?? null;
+      const policyNumber = deal.policyNumber ?? null;
+      const carrier = deal.carrier ?? (rawDeal && typeof rawDeal.carrier === "string" ? rawDeal.carrier : null);
+      const productType = deal.productType ?? (rawDeal && typeof rawDeal.policy_type === "string" ? rawDeal.policy_type : null);
+      // Get sales agent from raw deal data (sales_agent field)
+      const salesAgent = (rawDeal && typeof rawDeal.sales_agent === "string" ? rawDeal.sales_agent : null) || leadInfo.agentName || null;
+      
+      // Parse monthly premium
+      let monthlyPremium: number | null = null;
+      if (deal.monthlyPremium != null) {
+        if (typeof deal.monthlyPremium === "number") {
+          monthlyPremium = deal.monthlyPremium;
+        } else if (typeof deal.monthlyPremium === "string") {
+          const parsed = parseFloat(deal.monthlyPremium.replace(/[^0-9.-]/g, ""));
+          monthlyPremium = isNaN(parsed) ? null : parsed;
+        }
+      } else if (rawDeal && rawDeal.monthly_premium != null) {
+        if (typeof rawDeal.monthly_premium === "number") {
+          monthlyPremium = rawDeal.monthly_premium;
+        } else if (typeof rawDeal.monthly_premium === "string") {
+          const parsed = parseFloat(rawDeal.monthly_premium.replace(/[^0-9.-]/g, ""));
+          monthlyPremium = isNaN(parsed) ? null : parsed;
+        }
+      }
+
+      // Parse face amount (coverage)
+      let faceAmount: number | null = null;
+      if (deal.coverage != null) {
+        if (typeof deal.coverage === "number") {
+          faceAmount = deal.coverage;
+        } else if (typeof deal.coverage === "string") {
+          const parsed = parseFloat(deal.coverage.replace(/[^0-9.-]/g, ""));
+          faceAmount = isNaN(parsed) ? null : parsed;
+        }
+      } else if (rawDeal && rawDeal.face_amount != null) {
+        if (typeof rawDeal.face_amount === "number") {
+          faceAmount = rawDeal.face_amount;
+        } else if (typeof rawDeal.face_amount === "string") {
+          const parsed = parseFloat(rawDeal.face_amount.replace(/[^0-9.-]/g, ""));
+          faceAmount = isNaN(parsed) ? null : parsed;
+        }
+      }
+
+      // Try to fetch full deal data from database if dealId is available
+      let fullDealData: Record<string, unknown> | null = null;
+      if (deal.dealId) {
+        const { data: dealData } = await supabase
+          .from("monday_com_deals")
+          .select("policy_number, carrier, policy_type, deal_value, cc_value, sales_agent, call_center")
+          .eq("id", deal.dealId)
+          .maybeSingle();
+        if (dealData) {
+          fullDealData = dealData;
+        }
+      }
+
+      // Try to fetch lead_vendor from leads table using submission_id
+      let leadVendorFromDb: string | null = null;
+      if (submissionId) {
+        try {
+          const { data: leadData } = await supabase
+            .from("leads")
+            .select("lead_vendor")
+            .eq("submission_id", submissionId)
+            .maybeSingle();
+          
+          if (leadData && typeof leadData.lead_vendor === "string") {
+            leadVendorFromDb = leadData.lead_vendor.trim() || null;
+          }
+        } catch (fetchError) {
+          console.warn("[carrier-requirements] Error fetching lead_vendor:", fetchError);
+        }
+      }
+
+      // Get lead_vendor from multiple sources (priority: DB lead > deal.call_center > lead.lead_vendor)
+      const finalLeadVendor = 
+        leadVendorFromDb ??
+        (typeof fullDealData?.call_center === "string" ? fullDealData.call_center.trim() : null) ??
+        (deal.callCenter ? deal.callCenter.trim() : null) ??
+        (rawDeal && typeof rawDeal.call_center === "string" ? rawDeal.call_center.trim() : null) ??
+        getString(lead, "lead_vendor") ??
+        null;
+
+      // Use database data if available, otherwise use deal/raw data
+      const finalPolicyNumber = fullDealData?.policy_number ?? policyNumber;
+      const finalCarrier = fullDealData?.carrier ?? carrier;
+      const finalProductType = fullDealData?.policy_type ?? productType;
+      // Get sales agent from database or raw deal data
+      const finalSalesAgent = (typeof fullDealData?.sales_agent === "string" ? fullDealData.sales_agent : null) ?? salesAgent;
+      // Use deal_value as monthly_premium fallback, cc_value as face_amount fallback
+      const finalMonthlyPremium = monthlyPremium ?? (typeof fullDealData?.deal_value === "number" ? fullDealData.deal_value : null);
+      const finalFaceAmount = faceAmount ?? (typeof fullDealData?.cc_value === "number" ? fullDealData.cc_value : null);
+      const finalDraftDate = null; // Carrier requirements workflow doesn't have draft date
+
       const { error: ddfError } = await supabase
-        .from("daily_deal_flow")
+        .from("retention_deal_flow")
         .upsert(
           {
             submission_id: submissionId,
-            lead_vendor: getString(lead, "lead_vendor"),
+            lead_vendor: finalLeadVendor,
             insured_name: getString(lead, "customer_full_name") ?? deal.clientName,
             client_phone_number: getString(lead, "phone_number") ?? deal.phoneNumber,
             date: getTodayDateEST(),
             retention_agent: retentionAgent,
-            is_retention_call: true,
+            agent: finalSalesAgent, // Sales agent from policy
             from_callback: true,
             status: shortFormStatus,
             notes: shortFormNotes,
+            policy_number: finalPolicyNumber,
+            carrier: finalCarrier,
+            product_type: finalProductType,
+            monthly_premium: finalMonthlyPremium,
+            face_amount: finalFaceAmount,
+            draft_date: finalDraftDate,
           },
           { onConflict: "submission_id, date" },
         );
 
       if (ddfError) throw ddfError;
+
+      // Note: Policy is now tracked as "handled" in retention_deal_flow
+      // Manager or agent can mark it as "fixed" later via the fixed policies page
+      console.log("[workflow] Policy handled - can be marked as fixed later:", {
+        submissionId,
+        dealId: deal.dealId,
+        retentionAgentName: retentionAgent,
+      });
 
       toast({ title: "Success", description: "Call result updated successfully" });
       await router.push("/agent/assigned-leads");

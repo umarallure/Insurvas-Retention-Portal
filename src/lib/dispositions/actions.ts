@@ -170,15 +170,6 @@ function determineGHLAction(
     };
   }
 
-  // Submitted disposition
-  if (disposition === "Submitted") {
-    return {
-      type: "move_stage",
-      stage: "Pending Approval",
-      notes: "Application submitted",
-    };
-  }
-
   // Default: no GHL action needed
   return { type: "no_action" };
 }

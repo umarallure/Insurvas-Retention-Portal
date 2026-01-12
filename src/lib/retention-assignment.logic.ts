@@ -8,8 +8,9 @@ export type GhlStageOption = {
 /**
  * Fetch a list of GHL stages with approximate counts.
  * Avoids using unsupported `group()` and uses safe per-value counts.
+ * @param carrierFilter Optional array of carrier names to filter by
  */
-export async function getGhlStages(): Promise<GhlStageOption[]> {
+export async function getGhlStages(carrierFilter?: string[]): Promise<GhlStageOption[]> {
   try {
     const stageSet = new Set<string>();
     const PAGE_SIZE = 1000;
@@ -17,12 +18,19 @@ export async function getGhlStages(): Promise<GhlStageOption[]> {
     let pagesWithoutNew = 0;
 
     while (true) {
-      const { data: rows, error: rowsError } = await supabase
+      let query = supabase
         .from("monday_com_deals")
         .select("ghl_stage")
+        .eq("is_active", true)
         .not("ghl_stage", "is", null)
         .range(offset, offset + PAGE_SIZE - 1);
 
+      // Apply carrier filter if provided
+      if (carrierFilter && carrierFilter.length > 0) {
+        query = query.in("carrier", carrierFilter);
+      }
+
+      const { data: rows, error: rowsError } = await query;
       if (rowsError) throw rowsError;
 
       const before = stageSet.size;
@@ -60,11 +68,18 @@ export async function getGhlStages(): Promise<GhlStageOption[]> {
       const slice = stages.slice(i, i + CONCURRENCY);
       const results = await Promise.all(
         slice.map(async (stage) => {
-          const { count, error } = await supabase
+          let countQuery = supabase
             .from("monday_com_deals")
             .select("id", { count: "exact", head: true })
+            .eq("is_active", true)
             .eq("ghl_stage", stage);
 
+          // Apply carrier filter if provided
+          if (carrierFilter && carrierFilter.length > 0) {
+            countQuery = countQuery.in("carrier", carrierFilter);
+          }
+
+          const { count, error } = await countQuery;
           if (error) throw error;
           return { stage, count: count ?? 0 } as GhlStageOption;
         }),

@@ -594,20 +594,76 @@ export default function RetentionWorkflowPage() {
         },
       });
 
+      // Try to fetch full deal data from database if dealId is available
+      let fullDealData: Record<string, unknown> | null = null;
+      if (deal.dealId) {
+        const { data: dealData } = await supabase
+          .from("monday_com_deals")
+          .select("policy_number, carrier, policy_type, deal_value, cc_value, sales_agent, call_center")
+          .eq("id", deal.dealId)
+          .maybeSingle();
+        if (dealData) {
+          fullDealData = dealData;
+        }
+      }
+
+      // Try to fetch lead_vendor from leads table using submission_id
+      let leadVendorFromDb: string | null = null;
+      if (submissionId) {
+        try {
+          const { data: leadData } = await supabase
+            .from("leads")
+            .select("lead_vendor")
+            .eq("submission_id", submissionId)
+            .maybeSingle();
+          
+          if (leadData && typeof leadData.lead_vendor === "string") {
+            leadVendorFromDb = leadData.lead_vendor.trim() || null;
+          }
+        } catch (fetchError) {
+          console.warn("[retention-workflow] Error fetching lead_vendor:", fetchError);
+        }
+      }
+
+      // Get lead_vendor from multiple sources (priority: DB lead > deal.call_center > lead.lead_vendor)
+      const finalLeadVendor = 
+        leadVendorFromDb ??
+        (typeof fullDealData?.call_center === "string" ? fullDealData.call_center.trim() : null) ??
+        (deal.callCenter ? deal.callCenter.trim() : null) ??
+        getString(lead, "lead_vendor") ??
+        null;
+
+      // Use database data if available, otherwise use deal data from route
+      const finalPolicyNumber = fullDealData?.policy_number ?? deal.policyNumber;
+      const finalCarrier = fullDealData?.carrier ?? deal.carrier;
+      const finalProductType = fullDealData?.policy_type ?? null;
+      // Get sales agent from database or leadInfo
+      const finalSalesAgent = (typeof fullDealData?.sales_agent === "string" ? fullDealData.sales_agent : null) ?? leadInfoFromRoute.agentName || null;
+      // Use deal_value as monthly_premium fallback, cc_value as face_amount fallback
+      const finalMonthlyPremium = typeof fullDealData?.deal_value === "number" ? fullDealData.deal_value : null;
+      const finalFaceAmount = typeof fullDealData?.cc_value === "number" ? fullDealData.cc_value : null;
+      const finalDraftDate = null; // This page doesn't have draft date from form
+
       const { error: ddfError } = await supabase
-        .from("daily_deal_flow")
+        .from("retention_deal_flow")
         .upsert(
           {
             submission_id: submissionId,
-            lead_vendor: getString(lead, "lead_vendor"),
+            lead_vendor: finalLeadVendor,
             insured_name: getString(lead, "customer_full_name") ?? deal.clientName,
             client_phone_number: getString(lead, "phone_number") ?? deal.phoneNumber,
             date: getTodayDateEST(),
             retention_agent: retentionAgent,
-            is_retention_call: true,
+            agent: finalSalesAgent, // Sales agent from policy
             from_callback: true,
             status: shortFormStatus,
             notes: shortFormNotes,
+            policy_number: finalPolicyNumber,
+            carrier: finalCarrier,
+            product_type: finalProductType,
+            monthly_premium: finalMonthlyPremium,
+            face_amount: finalFaceAmount,
+            draft_date: finalDraftDate,
           },
           { onConflict: "submission_id, date" },
         );

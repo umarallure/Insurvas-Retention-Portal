@@ -30,8 +30,17 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# env files (NEVER commit these)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env*.local
+*.env
+.env.*
+!.env.example
+!.env.template
 
 # vercel
 .vercel
@@ -39,3 +48,71 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.cache
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+.vercel/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets and keys
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+.secrets/
+
+# Analysis/script outputs (may contain sensitive data)
+scripts/*.txt
+scripts/*.log
+scripts/output/
+*.analysis.txt
+*.output.txt
+
+# Test files with sensitive data
+**/test-data/
+**/sample-data/
+**/dummy-data/
+
+# Documentation (internal)
+HOW_IT_WORKS.md
+DATABASE_SCHEMA.md
+SECURITY.md
+
+# Supabase migrations
+supabase/migrations/

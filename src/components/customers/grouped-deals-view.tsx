@@ -62,6 +62,7 @@ export function GroupedDealsView() {
       const { data, error } = await supabase
         .from("monday_com_deals")
         .select("group_title")
+        .eq("is_active", true)
         .not("group_title", "is", null)
         .or(`policy_number.ilike.%${escaped}%,phone_number.ilike.%${escaped}%,deal_name.ilike.%${escaped}%`)
         .limit(5000);

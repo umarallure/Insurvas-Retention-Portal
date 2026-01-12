@@ -198,6 +198,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     if (leadId && autofill && Object.keys(autofill).length > 0) {
       const leadUpdatePatch: Record<string, unknown> = {};
       
+      // Only map fields that actually exist in the leads table
+      // Note: policy_number does NOT exist in leads table - it's policy-specific and stored in daily_deal_flow/monday_com_deals
+      // agent and product_type DO exist in leads table, but they're lead-level fields, not policy-specific
       const fieldMappings: Record<string, string> = {
         customer_full_name: "customer_full_name",
         phone_number: "phone_number",
@@ -209,10 +212,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         date_of_birth: "date_of_birth",
         social_security: "social_security",
         carrier: "carrier",
-        product_type: "product_type",
-        policy_number: "policy_number",
+        product_type: "product_type", // Exists in leads table (lead-level, not policy-specific)
         monthly_premium: "monthly_premium",
-        agent: "agent",
+        agent: "agent", // Exists in leads table (lead-level, not policy-specific)
         lead_vendor: "lead_vendor",
         beneficiary_information: "beneficiary_information",
         billing_and_mailing_address_is_the_same: "billing_and_mailing_address_is_the_same",
@@ -238,6 +240,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         birth_state: "birth_state",
         call_phone_landline: "call_phone_landline",
         additional_notes: "additional_notes",
+        // Note: policy_number is NOT in leads table - it's policy-specific and stored per-policy in daily_deal_flow/monday_com_deals
+        // Each policy has its own verification session, so multiple policies are handled separately
       };
 
       for (const [autofillKey, leadColumn] of Object.entries(fieldMappings)) {
@@ -305,7 +309,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           
           const autofillValue = autofill[fieldName];
           if (autofillValue && typeof autofillValue === "string" && autofillValue.trim().length > 0) {
-            if (!currentOriginal || currentOriginal.trim().length === 0) {
+            // For monthly_premium and coverage_amount, always update with autofill value because these should match
+            // what the policy card displays, even if original_value already exists. This ensures consistency.
+            const shouldUpdate = fieldName === "monthly_premium" || fieldName === "coverage_amount" || !currentOriginal || currentOriginal.trim().length === 0;
+            
+            if (shouldUpdate) {
               const { error: updateErr } = await supabaseAdmin
                 .from("retention_verification_items")
                 .update({ original_value: autofillValue })
@@ -313,6 +321,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
               
               if (updateErr) {
                 console.error(`[verification-items] Failed to update item ${itemId}:`, updateErr);
+              } else if (fieldName === "monthly_premium" || fieldName === "coverage_amount") {
+                console.log(`[verification-items] Updated ${fieldName} from ${currentOriginal} to ${autofillValue} for item ${itemId}`);
               }
             }
           }

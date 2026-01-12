@@ -16,7 +16,7 @@ import {
 import type { Period } from "@/types";
 import type { DateRange } from "react-day-picker";
 import type { Sale, SaleStatus } from "@/types";
-import { randomFrom, randomInt } from "@/lib/random";
+import { getRecentSales } from "@/lib/dashboard-stats";
 
 const sampleEmails = [
   "james.anderson@example.com",
@@ -43,33 +43,57 @@ function statusBadge(status: SaleStatus) {
 
 export function HomeSales({ period, range }: { period: Period; range: DateRange }) {
   const [rows, setRows] = React.useState<Sale[]>([]);
+  const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {
-    const now = new Date();
-    const next: Sale[] = [];
+    let cancelled = false;
 
-    for (let i = 0; i < 5; i++) {
-      const hoursAgo = randomInt(0, 48);
-      const date = new Date(now.getTime() - hoursAgo * 3600000);
+    const fetchSales = async () => {
+      setLoading(true);
+      try {
+        const recentSales = await getRecentSales(10);
+        if (cancelled) return;
+        setRows(recentSales);
+      } catch (error) {
+        console.error("[HomeSales] Error fetching sales:", error);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
 
-      next.push({
-        id: (4600 - i).toString(),
-        date: date.toISOString(),
-        status: randomFrom(["paid", "failed", "refunded"]),
-        email: randomFrom(sampleEmails),
-        amount: randomInt(100, 1000),
-      });
-    }
-
-    next.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    setRows(next);
-  }, [period, range.from, range.to]);
+    void fetchSales();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat("en-US", {
       style: "currency",
-      currency: "EUR",
+      currency: "USD",
     }).format(amount);
+
+  if (loading) {
+    return (
+      <div className="mt-6 overflow-hidden rounded-lg border bg-card">
+        <div className="p-8 text-center text-sm text-muted-foreground">
+          Loading sales data...
+        </div>
+      </div>
+    );
+  }
+
+  if (rows.length === 0) {
+    return (
+      <div className="mt-6 overflow-hidden rounded-lg border bg-card">
+        <div className="p-8 text-center text-sm text-muted-foreground">
+          No recent submissions found
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mt-6 overflow-hidden rounded-lg border">
@@ -79,8 +103,8 @@ export function HomeSales({ period, range }: { period: Period; range: DateRange 
             <TableHead className="w-[80px]">ID</TableHead>
             <TableHead className="w-[160px]">Date</TableHead>
             <TableHead className="w-[140px]">Status</TableHead>
-            <TableHead>Email</TableHead>
-            <TableHead className="text-right w-[120px]">Amount</TableHead>
+            <TableHead>Policy / Client</TableHead>
+            <TableHead className="text-right w-[120px]">Premium</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>

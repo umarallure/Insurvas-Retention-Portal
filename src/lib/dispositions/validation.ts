@@ -28,7 +28,6 @@ export function validateAgentDisposition(
 
   // Licensed agent only dispositions
   const licensedAgentOnlyDispositions: Disposition[] = [
-    "Submitted",
     "Chargeback DQ",
   ];
 

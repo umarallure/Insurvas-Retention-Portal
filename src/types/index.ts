@@ -44,6 +44,7 @@ export interface MondayComDeal {
   policy_type: string | null
   group_title: string | null
   group_color: string | null
+  is_active: boolean
   created_at: string
   updated_at: string
 }

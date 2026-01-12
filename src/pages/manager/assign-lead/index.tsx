@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { FilterIcon, Loader2 } from "lucide-react";
+import { MultiSelect } from "@/components/ui/multi-select";
 
 import { BulkAssignModal } from "@/components/manager/assign-lead/bulk-assign-modal";
 import { BulkUnassignModal } from "@/components/manager/assign-lead/bulk-unassign-modal";
@@ -35,6 +36,7 @@ type MondayDealRow = {
   call_center: string | null;
   group_title: string | null;
   last_updated: string | null;
+  carrier: string | null;
 };
 
 type AssignLeadRow = {
@@ -45,6 +47,7 @@ type AssignLeadRow = {
   vendor: string | null;
   state: string | null;
   lead_id: string | null;
+  carrier: string | null;
 };
 
 type AssignmentRow = {
@@ -70,6 +73,10 @@ export default function ManagerAssignLeadPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState<string>("all");
+  const [carrierFilter, setCarrierFilter] = useState<string[]>([]);
+  const [availableCarriers, setAvailableCarriers] = useState<string[]>([]);
+  const [agentFilter, setAgentFilter] = useState<string[]>([]);
+  const [availableAgents, setAvailableAgents] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [rows, setRows] = useState<AssignLeadRow[]>([]);
@@ -133,7 +140,7 @@ export default function ManagerAssignLeadPage() {
   }, []);
 
   const loadLeadsAndAssignments = useCallback(async (opts?: { force?: boolean }) => {
-    const queryKey = JSON.stringify({ page, search: search.trim(), groupFilter });
+    const queryKey = JSON.stringify({ page, search: search.trim(), groupFilter, carrierFilter: carrierFilter.sort().join(","), agentFilter: agentFilter.sort().join(",") });
     if (!opts?.force && leadsLastQueryKeyRef.current === queryKey) return;
     if (leadsLoadInFlightRef.current) return;
 
@@ -142,7 +149,127 @@ export default function ManagerAssignLeadPage() {
     setLoading(true);
     try {
       const trimmed = search.trim();
-      const selectedGroupTitle = groupFilter === "all" ? null : groupFilter;
+      const selectedGroup = groupFilter === "all" ? null : DEAL_GROUPS.find((g) => g.id === groupFilter);
+
+      // Filter by agent assignments if agentFilter is set
+      let filteredDealIds: number[] | null = null;
+      if (agentFilter.length > 0) {
+        const hasUnassigned = agentFilter.includes("Unassigned");
+        const agentNames = agentFilter.filter((name) => name !== "Unassigned");
+
+        if (agentNames.length > 0) {
+          // Get profile IDs for selected agent names
+          const { data: agentProfiles } = await supabase
+            .from("profiles")
+            .select("id")
+            .in("display_name", agentNames);
+
+          const agentProfileIds = (agentProfiles ?? []).map((p) => p.id as string);
+
+          if (agentProfileIds.length > 0) {
+            // Get deal_ids assigned to these agents
+            const { data: assignedDeals } = await supabase
+              .from("retention_assigned_leads")
+              .select("deal_id")
+              .eq("status", "active")
+              .in("assignee_profile_id", agentProfileIds)
+              .not("deal_id", "is", null);
+
+            const assignedDealIds = new Set(
+              (assignedDeals ?? [])
+                .map((a) => (typeof a.deal_id === "number" ? a.deal_id : null))
+                .filter((id): id is number => id !== null)
+            );
+
+            if (hasUnassigned) {
+              // If "Unassigned" is also selected, get ALL deal_ids with assignments
+              const { data: allAssignedDeals } = await supabase
+                .from("retention_assigned_leads")
+                .select("deal_id")
+                .eq("status", "active")
+                .not("deal_id", "is", null);
+
+              const allAssignedDealIds = new Set(
+                (allAssignedDeals ?? [])
+                  .map((a) => (typeof a.deal_id === "number" ? a.deal_id : null))
+                  .filter((id): id is number => id !== null)
+              );
+
+              // Get all active deals and filter: either assigned to selected agents OR not assigned at all
+              const { data: allActiveDeals } = await supabase
+                .from("monday_com_deals")
+                .select("id")
+                .eq("is_active", true)
+                .not("monday_item_id", "is", null);
+
+              const allDealIds = (allActiveDeals ?? [])
+                .map((d) => (typeof d.id === "number" ? d.id : null))
+                .filter((id): id is number => id !== null);
+
+              // Combine: deals assigned to selected agents OR unassigned deals
+              filteredDealIds = Array.from(
+                new Set([
+                  ...Array.from(assignedDealIds),
+                  ...allDealIds.filter((id) => !allAssignedDealIds.has(id)),
+                ])
+              );
+            } else {
+              // Only selected agents
+              filteredDealIds = Array.from(assignedDealIds);
+            }
+          } else if (hasUnassigned) {
+            // Only "Unassigned" selected, no valid agent names
+            const { data: allAssignedDeals } = await supabase
+              .from("retention_assigned_leads")
+              .select("deal_id")
+              .eq("status", "active")
+              .not("deal_id", "is", null);
+
+            const allAssignedDealIds = new Set(
+              (allAssignedDeals ?? [])
+                .map((a) => (typeof a.deal_id === "number" ? a.deal_id : null))
+                .filter((id): id is number => id !== null)
+            );
+
+            const { data: allActiveDeals } = await supabase
+              .from("monday_com_deals")
+              .select("id")
+              .eq("is_active", true)
+              .not("monday_item_id", "is", null);
+
+            const allDealIds = (allActiveDeals ?? [])
+              .map((d) => (typeof d.id === "number" ? d.id : null))
+              .filter((id): id is number => id !== null);
+
+            filteredDealIds = allDealIds.filter((id) => !allAssignedDealIds.has(id));
+          }
+        } else if (hasUnassigned) {
+          // Only "Unassigned" selected
+          const { data: allAssignedDeals } = await supabase
+            .from("retention_assigned_leads")
+            .select("deal_id")
+            .eq("status", "active")
+            .not("deal_id", "is", null);
+
+          const allAssignedDealIds = new Set(
+            (allAssignedDeals ?? [])
+              .map((a) => (typeof a.deal_id === "number" ? a.deal_id : null))
+              .filter((id): id is number => id !== null)
+          );
+
+          const { data: allActiveDeals } = await supabase
+            .from("monday_com_deals")
+            .select("id")
+            .eq("is_active", true)
+            .not("monday_item_id", "is", null);
+
+          const allDealIds = (allActiveDeals ?? [])
+            .map((d) => (typeof d.id === "number" ? d.id : null))
+            .filter((id): id is number => id !== null);
+
+          filteredDealIds = allDealIds.filter((id) => !allAssignedDealIds.has(id));
+        }
+      }
 
       const from = (page - 1) * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
@@ -150,14 +277,40 @@ export default function ManagerAssignLeadPage() {
       let dealsQuery = supabase
         .from("monday_com_deals")
         .select(
-          "id,monday_item_id,ghl_name,deal_name,phone_number,call_center,group_title,last_updated",
+          "id,monday_item_id,ghl_name,deal_name,phone_number,call_center,group_title,last_updated,carrier,ghl_stage",
           { count: "exact" },
         )
+        .eq("is_active", true)
         .not("monday_item_id", "is", null)
         .order("last_updated", { ascending: false, nullsFirst: false });
 
-      if (selectedGroupTitle) {
-        dealsQuery = dealsQuery.eq("group_title", selectedGroupTitle);
+      // Apply agent filter by deal_id if we have filtered deal IDs
+      if (filteredDealIds !== null && filteredDealIds.length > 0) {
+        dealsQuery = dealsQuery.in("id", filteredDealIds);
+      } else if (filteredDealIds !== null && filteredDealIds.length === 0) {
+        // No deals match the filter, return empty result
+        setRows([]);
+        setTotalRows(0);
+        setAssignments([]);
+        return;
+      }
+
+      // Always filter by GHL stages - only show the 4 categories (same logic as customers page)
+      // When "all" is selected, show all 4 categories combined (1559 records)
+      // When a specific category is selected, show only that category
+      const stagesToFilter = selectedGroup && selectedGroup.ghlStages 
+        ? selectedGroup.ghlStages 
+        : DEAL_GROUPS.flatMap((g) => g.ghlStages); // All 4 categories when "all" is selected
+      
+      if (stagesToFilter.length > 0) {
+        const stageFilters = stagesToFilter.map((stage) => `ghl_stage.ilike.%${stage.replace(/,/g, "")}%`).join(",");
+        if (stageFilters.length > 0) {
+          dealsQuery = dealsQuery.or(stageFilters);
+        }
+      }
+
+      if (carrierFilter.length > 0) {
+        dealsQuery = dealsQuery.in("carrier", carrierFilter);
       }
 
       if (trimmed) {
@@ -235,6 +388,7 @@ export default function ManagerAssignLeadPage() {
             vendor: (lead?.lead_vendor ?? d.call_center) ?? null,
             state: lead?.state ?? null,
             lead_id: lead?.id ?? null,
+            carrier: d.carrier ?? null,
           },
         ];
       });
@@ -297,7 +451,87 @@ export default function ManagerAssignLeadPage() {
       setLoading(false);
       leadsLoadInFlightRef.current = false;
     }
-  }, [groupFilter, page, search]);
+  }, [groupFilter, page, search, carrierFilter, agentFilter]);
+
+  const loadAvailableCarriers = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from("monday_com_deals")
+        .select("carrier")
+        .eq("is_active", true)
+        .not("carrier", "is", null);
+
+      if (error) {
+        console.error("[manager-assign-lead] loadAvailableCarriers error", error);
+        return;
+      }
+
+      const carriers = Array.from(
+        new Set(
+          (data ?? [])
+            .map((d) => (typeof d.carrier === "string" ? d.carrier.trim() : null))
+            .filter((c): c is string => c != null && c.length > 0)
+        )
+      ).sort();
+
+      setAvailableCarriers(carriers);
+    } catch (error) {
+      console.error("[manager-assign-lead] loadAvailableCarriers error", error);
+    }
+  }, []);
+
+  const loadAvailableAgents = useCallback(async () => {
+    try {
+      const { data: assignmentData, error: assignmentError } = await supabase
+        .from("retention_assigned_leads")
+        .select("assignee_profile_id")
+        .eq("status", "active");
+
+      if (assignmentError) {
+        console.error("[manager-assign-lead] loadAvailableAgents assignment error", assignmentError);
+        return;
+      }
+
+      const agentIds = Array.from(
+        new Set((assignmentData ?? []).map((a) => a.assignee_profile_id).filter((id): id is string => !!id))
+      );
+
+      if (agentIds.length === 0) {
+        setAvailableAgents([]);
+        return;
+      }
+
+      const { data: agentProfiles, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, display_name")
+        .in("id", agentIds);
+
+      if (profilesError) {
+        console.error("[manager-assign-lead] loadAvailableAgents profiles error", profilesError);
+        return;
+      }
+
+      const agentNames = Array.from(
+        new Set(
+          (agentProfiles ?? [])
+            .map((p) => (p.display_name as string | null) ?? null)
+            .filter((name): name is string => name != null && name.length > 0)
+        )
+      ).sort();
+
+      setAvailableAgents(["Unassigned", ...agentNames]);
+    } catch (error) {
+      console.error("[manager-assign-lead] loadAvailableAgents error", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadAvailableCarriers();
+  }, [loadAvailableCarriers]);
+
+  useEffect(() => {
+    void loadAvailableAgents();
+  }, [loadAvailableAgents]);
 
   useEffect(() => {
     void loadAgents();
@@ -436,6 +670,34 @@ export default function ManagerAssignLeadPage() {
     if (!activeLead || !selectedAgentId) return;
     if (originalAgentId && selectedAgentId === originalAgentId) return;
 
+    // Get current manager's profile ID (the person doing the assignment)
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) {
+      toast({
+        title: "Error",
+        description: "Unable to identify current user. Please refresh and try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const { data: managerProfile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("user_id", session.user.id)
+      .single();
+
+    if (profileError || !managerProfile?.id) {
+      toast({
+        title: "Error",
+        description: "Unable to load manager profile. Please refresh and try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const managerProfileId = managerProfile.id as string;
+
     const findDuplicateDealIdsForLead = async (): Promise<number[]> => {
       const phone = (activeLead.phone_number ?? "").toString().trim();
       const name = (activeLead.display_name ?? "").toString().trim();
@@ -445,6 +707,7 @@ export default function ManagerAssignLeadPage() {
       let q = supabase
         .from("monday_com_deals")
         .select("id")
+        .eq("is_active", true)
         .not("monday_item_id", "is", null)
         .limit(5000);
 
@@ -498,7 +761,7 @@ export default function ManagerAssignLeadPage() {
           .from("retention_assigned_leads")
           .update({
             assignee_profile_id: selectedAgentId,
-            assigned_by_profile_id: selectedAgentId,
+            assigned_by_profile_id: managerProfileId, // Manager who is doing the assignment
             status: "active",
             assigned_at: new Date().toISOString(),
           })
@@ -508,7 +771,7 @@ export default function ManagerAssignLeadPage() {
       } else {
         const payload: Record<string, unknown> = {
           assignee_profile_id: selectedAgentId,
-          assigned_by_profile_id: selectedAgentId,
+          assigned_by_profile_id: managerProfileId, // Manager who is doing the assignment
           status: "active",
           assigned_at: new Date().toISOString(),
         };
@@ -562,7 +825,7 @@ export default function ManagerAssignLeadPage() {
                 .from("retention_assigned_leads")
                 .update({
                   assignee_profile_id: selectedAgentId,
-                  assigned_by_profile_id: selectedAgentId,
+                  assigned_by_profile_id: managerProfileId, // Manager who is doing the assignment
                   status: "active",
                   assigned_at: now,
                 })
@@ -573,7 +836,7 @@ export default function ManagerAssignLeadPage() {
               const { error } = await supabase.from("retention_assigned_leads").insert({
                 deal_id: dealId,
                 assignee_profile_id: selectedAgentId,
-                assigned_by_profile_id: selectedAgentId,
+                assigned_by_profile_id: managerProfileId, // Manager who is doing the assignment
                 status: "active",
                 assigned_at: now,
               });
@@ -700,22 +963,47 @@ export default function ManagerAssignLeadPage() {
                   <SelectContent>
                     <SelectItem value="all">All Groups</SelectItem>
                     {DEAL_GROUPS.map((g) => (
-                      <SelectItem key={g.id} value={g.title}>
+                      <SelectItem key={g.id} value={g.id}>
                         {g.title}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                <MultiSelect
+                  options={availableCarriers}
+                  selected={carrierFilter}
+                  onChange={(selected) => {
+                    setCarrierFilter(selected);
+                    setPage(1);
+                  }}
+                  placeholder="All Carriers"
+                  className="w-full lg:w-[200px]"
+                  showAllOption={true}
+                  allOptionLabel="All Carriers"
+                />
+                <MultiSelect
+                  options={availableAgents}
+                  selected={agentFilter}
+                  onChange={(selected) => {
+                    setAgentFilter(selected);
+                    setPage(1);
+                  }}
+                  placeholder="All Agents"
+                  className="w-full lg:w-[200px]"
+                  showAllOption={true}
+                  allOptionLabel="All Agents"
+                />
               </div>
 
               <Button
-                variant="outline"
+                variant="ghost"
+                size="sm"
                 className="lg:ml-auto"
                 onClick={handleRefresh}
                 disabled={loading || saving || refreshing}
+                title="Manually refresh data"
               >
-                {refreshing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Refresh
+                {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <FilterIcon className="h-4 w-4" />}
               </Button>
 
               <Button
@@ -736,9 +1024,10 @@ export default function ManagerAssignLeadPage() {
             </div>
 
             <div className="rounded-md border">
-              <div className="grid grid-cols-[minmax(240px,2fr)_minmax(140px,1fr)_minmax(180px,1fr)_minmax(160px,1fr)_minmax(170px,auto)] gap-4 p-3 text-sm font-medium text-muted-foreground">
+              <div className="grid grid-cols-[minmax(200px,2fr)_minmax(120px,1fr)_minmax(100px,1fr)_minmax(150px,1fr)_minmax(150px,1fr)_minmax(170px,auto)] gap-4 p-3 text-sm font-medium text-muted-foreground">
                 <div>Name</div>
                 <div>Phone</div>
+                <div>Carrier</div>
                 <div>Vendor / State</div>
                 <div>Assigned Agent</div>
                 <div className="text-right">Actions</div>
@@ -751,12 +1040,12 @@ export default function ManagerAssignLeadPage() {
                 <div className="border-t p-3 text-sm text-muted-foreground">No leads found.</div>
               ) : (
                 rows.map((row) => {
-                  const assignment = assignments.find((a) => (row.lead_id && a.lead_id === row.lead_id) || (row.deal_id && a.deal_id === row.deal_id)) || null;
-                  const isCreating = creatingLeadFor === row.monday_item_id;
+                    const assignment = assignments.find((a) => (row.lead_id && a.lead_id === row.lead_id) || (row.deal_id && a.deal_id === row.deal_id)) || null;
+                    const isCreating = creatingLeadFor === row.monday_item_id;
                   return (
                     <div
                       key={row.monday_item_id}
-                      className="grid grid-cols-[minmax(240px,2fr)_minmax(140px,1fr)_minmax(180px,1fr)_minmax(160px,1fr)_minmax(170px,auto)] gap-4 p-3 text-sm items-center border-t bg-background/40"
+                      className="grid grid-cols-[minmax(200px,2fr)_minmax(120px,1fr)_minmax(100px,1fr)_minmax(150px,1fr)_minmax(150px,1fr)_minmax(170px,auto)] gap-4 p-3 text-sm items-center border-t bg-background/40"
                     >
                       <div className="min-w-0 truncate" title={row.display_name ?? undefined}>
                         <span className="font-medium">{row.display_name ?? "Unknown"}</span>
@@ -768,6 +1057,9 @@ export default function ManagerAssignLeadPage() {
                       </div>
                       <div className="truncate" title={row.phone_number ?? undefined}>
                         {row.phone_number ?? "-"}
+                      </div>
+                      <div className="truncate" title={row.carrier ?? undefined}>
+                        {row.carrier ?? "-"}
                       </div>
                       <div className="truncate">
                         {row.vendor ?? "-"} {row.state ? `(${row.state})` : ""}

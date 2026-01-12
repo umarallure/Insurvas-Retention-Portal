@@ -7,6 +7,10 @@ export type DealLite = {
   carrier: string | null;
   clientName: string | null;
   phoneNumber: string | null;
+  monthlyPremium?: number | string | null;
+  coverage?: number | string | null;
+  productType?: string | null;
+  raw?: Record<string, unknown> | null;
 };
 
 export type LeadInfo = {

@@ -70,6 +70,7 @@ function buildGroupQuery(group: DealGroup, search: string, page: number, pageSiz
     .select("id,monday_item_id,policy_number,carrier,policy_status,ghl_name,ghl_stage,phone_number,call_center,deal_name", {
       count: "exact",
     })
+    .eq("is_active", true)
     .order("last_updated", { ascending: false, nullsFirst: false })
     .range(from, to);
 
@@ -97,7 +98,30 @@ export function DealsKanbanView(props: DealsKanbanViewProps) {
   const [search, setSearch] = React.useState("");
   const [groupFilter, setGroupFilter] = React.useState<string>("all");
 
-  const pageSize = 25;
+  // Responsive page size based on screen size
+  const [pageSize, setPageSize] = React.useState(() => {
+    if (typeof window === "undefined") return 10;
+    const height = window.innerHeight;
+    // Calculate cards per column based on available height
+    // Each card is ~180px, plus header (~100px), pagination (~60px), padding (~40px)
+    const availableHeight = height - 200;
+    const cardsPerColumn = Math.max(5, Math.floor(availableHeight / 180));
+    return Math.min(20, cardsPerColumn); // Cap at 20 cards per page
+  });
+
+  React.useEffect(() => {
+    const updatePageSize = () => {
+      if (typeof window === "undefined") return;
+      const height = window.innerHeight;
+      const availableHeight = height - 200;
+      const cardsPerColumn = Math.max(5, Math.floor(availableHeight / 180));
+      setPageSize(Math.min(20, cardsPerColumn));
+    };
+
+    updatePageSize();
+    window.addEventListener("resize", updatePageSize);
+    return () => window.removeEventListener("resize", updatePageSize);
+  }, []);
   const [groupPages, setGroupPages] = React.useState<Record<string, number>>(() => {
     const m: Record<string, number> = {};
     for (const g of GROUPS) m[g.id] = 1;
@@ -243,22 +267,22 @@ export function DealsKanbanView(props: DealsKanbanViewProps) {
   }, [groupPages, pageSize, search, visibleGroups]);
 
   return (
-    <div className="flex flex-col gap-6 h-full min-h-0">
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-card p-4 rounded-xl border shadow-sm shrink-0">
-        <div className="relative w-full max-w-2xl">
-          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+    <div className="flex flex-col gap-3 h-full min-h-0">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-card p-4 rounded-lg border shadow-sm shrink-0">
+        <div className="relative w-full sm:flex-1 max-w-none">
+          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 size-5 text-muted-foreground" />
           <Input
             placeholder="Search by Policy Number, Phone, or Deal Name..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-10 h-10 border-none bg-muted/50 focus-visible:ring-1"
+            className="pl-11 h-12 text-lg border-none bg-muted/50 focus-visible:ring-2 focus-visible:ring-primary/20"
           />
         </div>
 
-        <div className="flex items-center gap-3 w-full sm:w-auto">
-          <FilterIcon className="size-4 text-muted-foreground hidden sm:block" />
+        <div className="flex items-center gap-3 w-full sm:w-auto shrink-0">
+          <FilterIcon className="size-5 text-muted-foreground hidden sm:block" />
           <Select value={groupFilter} onValueChange={setGroupFilter}>
-            <SelectTrigger className="w-full sm:w-[260px] h-10 bg-muted/50 border-none">
+            <SelectTrigger className="w-full sm:w-[220px] h-12 text-lg bg-muted/50 border-none focus:ring-2 focus:ring-primary/20">
               <SelectValue placeholder="All Groups" />
             </SelectTrigger>
             <SelectContent>
@@ -277,19 +301,22 @@ export function DealsKanbanView(props: DealsKanbanViewProps) {
               size="sm"
               onClick={onRefresh}
               disabled={!!refreshLoading}
-              className="w-fit shadow-sm bg-card hover:bg-muted h-10"
+              className="w-fit shadow-sm bg-card hover:bg-muted h-12 px-4 text-base font-medium"
             >
-              <RefreshCcw className={`mr-2 size-4 ${refreshLoading ? "animate-spin" : ""}`} />
-              {refreshLoading ? "Syncing..." : "Refresh Board"}
+              <RefreshCcw className={`mr-2 size-5 ${refreshLoading ? "animate-spin" : ""}`} />
+              {refreshLoading ? "Syncing..." : "Refresh"}
             </Button>
           ) : null}
         </div>
       </div>
 
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0 w-full">
         <div
-          className="grid gap-4 h-full min-h-0 grid-cols-1 md:grid-cols-2 lg:grid-cols-4"
-          style={{ alignItems: "stretch" }}
+          className="grid h-full min-h-0 gap-2 w-full"
+          style={{ 
+            alignItems: "stretch", 
+            gridTemplateColumns: `repeat(${visibleGroups.length}, minmax(0, 1fr))`
+          }}
         >
           {visibleGroups.map((g) => {
             const s = groupState[g.id] ?? { loading: false, rows: [], count: null, hasMore: false };

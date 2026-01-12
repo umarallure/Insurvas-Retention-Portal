@@ -31,30 +31,29 @@ export function DealsKanbanCard({ deal }: { deal: DealsKanbanRow }) {
   }, [tagLabel]);
 
   const href = React.useMemo(() => {
-    return `/customers/lead-detail?${encodeURIComponent(String(deal.id))}`;
+    return `/customers/lead-detail?id=${encodeURIComponent(String(deal.id))}`;
   }, [deal.id]);
 
   return (
     <button
       type="button"
-      className="text-left rounded-xl border bg-card p-3 shadow-sm transition-colors hover:bg-muted/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full h-[168px] flex flex-col"
+      className="text-left rounded-lg border bg-card p-4 shadow-sm transition-all duration-200 ease-out hover:shadow-xl hover:border-primary/50 hover:scale-[1.05] hover:-translate-y-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full flex flex-col group transform origin-center"
       onClick={() => {
         void router.push(href);
       }}
     >
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1 flex flex-col gap-3">
         <div
-          className="text-sm font-semibold text-foreground truncate"
+          className="text-xl font-bold text-foreground truncate group-hover:text-primary transition-colors"
           title={(deal.ghl_name ?? deal.deal_name ?? undefined) as string | undefined}
         >
           {deal.ghl_name ?? deal.deal_name ?? "—"}
         </div>
 
         {tagLabel ? (
-          <div className="mt-2">
             <Badge
               variant="outline"
-              className="text-[10px] h-5 px-2 rounded-full"
+            className="text-sm h-7 px-3 rounded-full font-semibold w-fit"
               style={
                 tagStyle
                   ? {
@@ -67,26 +66,29 @@ export function DealsKanbanCard({ deal }: { deal: DealsKanbanRow }) {
             >
               {tagLabel}
             </Badge>
-          </div>
         ) : null}
-      </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs flex-1 min-h-0">
-        <div className="text-muted-foreground">Phone</div>
-        <div className="font-medium text-foreground text-right tabular-nums truncate" title={deal.phone_number ?? undefined}>
-          {deal.phone_number ?? "—"}
-        </div>
+        <div className="mt-auto space-y-2 text-base">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-muted-foreground font-semibold">Phone</span>
+            <span className="font-bold text-foreground tabular-nums truncate text-right" title={deal.phone_number ?? undefined}>
+              {deal.phone_number ?? "—"}
+            </span>
+          </div>
 
-        <div className="text-muted-foreground">Center</div>
-        <div className="text-right">
-          <Badge variant="secondary" className="bg-secondary/50 max-w-full">
-            <span className="truncate block">{deal.call_center ?? "—"}</span>
-          </Badge>
-        </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-muted-foreground font-semibold">Center</span>
+            <Badge variant="secondary" className="bg-secondary/50 text-sm h-6 px-2.5 font-medium">
+              <span className="truncate max-w-[120px] block">{deal.call_center ?? "—"}</span>
+            </Badge>
+          </div>
 
-        <div className="text-muted-foreground">GHL Stage</div>
-        <div className="font-medium text-foreground text-right truncate" title={deal.ghl_stage ?? undefined}>
-          {deal.ghl_stage ?? "—"}
+          <div className="flex items-start justify-between gap-2">
+            <span className="text-muted-foreground font-semibold">GHL Stage</span>
+            <span className="font-semibold text-foreground text-right truncate text-sm leading-snug" title={deal.ghl_stage ?? undefined}>
+              {deal.ghl_stage ?? "—"}
+            </span>
+          </div>
         </div>
       </div>
     </button>

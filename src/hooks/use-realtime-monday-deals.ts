@@ -21,6 +21,7 @@ export function useRealtimeMondayDeals(page: number, pageSize: number) {
         const { data: rows, error, count } = await supabase
           .from("monday_com_deals")
           .select("*", { count: "exact" })
+          .eq("is_active", true)
           .order("last_updated", { ascending: false, nullsFirst: false })
           .range(from, to);
 
