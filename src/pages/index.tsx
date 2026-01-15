@@ -42,6 +42,16 @@ export default function Home() {
     );
   }
 
+  // Only show manager dashboard for managers
+  // If user has no role, they shouldn't be here (AccessGate should handle it)
+  if (!access.isManager) {
+    return (
+      <div className="w-full px-6 py-6 min-h-screen bg-muted/20 flex items-center justify-center">
+        <div className="text-sm text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+
   // Show manager dashboard for managers
   return (
     <div className="w-full px-6 py-6 min-h-screen bg-muted/20">

@@ -28,7 +28,7 @@ import { getAllHandledPolicies } from "@/lib/handled-policies";
 import { createFixedPolicyTracking } from "@/lib/fixed-policies/tracking";
 import { Badge } from "@/components/ui/badge";
 import { formatEasternDate } from "@/lib/timezone";
-import { AlertCircle, CheckCircle2, Clock, Check } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, Check, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 type FixedPolicyRow = {
@@ -63,10 +63,11 @@ export default function FixedPoliciesPage() {
   const [search, setSearch] = useState("");
   const [agentFilter, setAgentFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [attentionFilter, setAttentionFilter] = useState<string>("all"); // "all" | "needs_confirmation" | "future_draft"
+  const [attentionFilter, setAttentionFilter] = useState<string>("all"); // "all" | "needs_confirmation" | "future_draft" | "past_draft"
   const [availableAgents, setAvailableAgents] = useState<string[]>([]);
   const [availableStatuses, setAvailableStatuses] = useState<string[]>([]);
   const [markingAsFixed, setMarkingAsFixed] = useState<string | null>(null);
+  const [rejectingPolicy, setRejectingPolicy] = useState<string | null>(null);
 
   const loadFixedPolicies = useCallback(async () => {
     setLoading(true);
@@ -147,6 +148,44 @@ export default function FixedPoliciesPage() {
     }
   }, [loadFixedPolicies, loadHandledPolicies, toast]);
 
+  const handleReject = useCallback(async (policy: any) => {
+    setRejectingPolicy(policy.submission_id);
+    try {
+      // Mark policy as rejected by creating a record in rejected_policies_tracking table
+      // If table doesn't exist, we'll use a notes update approach
+      const { error } = await supabase
+        .from("retention_deal_flow")
+        .update({
+          notes: `[REJECTED] ${policy.notes || ""}`.trim(),
+          status: policy.status ? `${policy.status} - REJECTED` : "REJECTED",
+        })
+        .eq("submission_id", policy.submission_id);
+
+      if (error) {
+        // If update fails, try creating a rejected tracking record
+        // For now, we'll just update the notes
+        console.error("[fixed-policies] Error rejecting policy:", error);
+        throw error;
+      }
+
+      toast({
+        title: "Success",
+        description: "Policy marked as rejected",
+      });
+      // Reload handled policies list
+      await loadHandledPolicies();
+    } catch (error) {
+      console.error("[fixed-policies] Error rejecting policy:", error);
+      toast({
+        title: "Error",
+        description: "Failed to reject policy",
+        variant: "destructive",
+      });
+    } finally {
+      setRejectingPolicy(null);
+    }
+  }, [loadHandledPolicies, toast]);
+
   const loadFilterOptions = useCallback(async () => {
     try {
       // Load unique agents from both fixed_policies_tracking and retention_deal_flow
@@ -218,17 +257,40 @@ export default function FixedPoliciesPage() {
     
     if (viewMode === "handled") {
       // Agent filter is already applied server-side in loadHandledPolicies
-      // Only apply search filter client-side
+      // Apply search and attention filters client-side
       return handledPolicies.filter((policy) => {
-        if (!searchLower) return true;
+        // Filter out rejected policies
+        const notes = policy.notes ?? "";
+        const status = policy.status ?? "";
+        if (notes.includes("[REJECTED]") || status.includes("REJECTED")) {
+          return false;
+        }
         
-        return (
-          (policy.monday_com_deals?.policy_number ?? "").toLowerCase().includes(searchLower) ||
-          (policy.monday_com_deals?.ghl_name ?? "").toLowerCase().includes(searchLower) ||
-          (policy.monday_com_deals?.deal_name ?? "").toLowerCase().includes(searchLower) ||
-          (policy.monday_com_deals?.phone_number ?? "").toLowerCase().includes(searchLower) ||
-          (policy.retention_agent ?? "").toLowerCase().includes(searchLower)
-        );
+        // Apply search filter
+        if (searchLower) {
+          const matchesSearch = 
+            (policy.monday_com_deals?.policy_number ?? "").toLowerCase().includes(searchLower) ||
+            (policy.monday_com_deals?.ghl_name ?? "").toLowerCase().includes(searchLower) ||
+            (policy.monday_com_deals?.deal_name ?? "").toLowerCase().includes(searchLower) ||
+            (policy.monday_com_deals?.phone_number ?? "").toLowerCase().includes(searchLower) ||
+            (policy.retention_agent ?? "").toLowerCase().includes(searchLower) ||
+            (policy.notes ?? "").toLowerCase().includes(searchLower);
+          if (!matchesSearch) return false;
+        }
+        
+        // Apply attention filter
+        if (attentionFilter === "needs_confirmation") {
+          const draftStatus = getDraftDateStatus(policy.draft_date, policy.status);
+          if (!draftStatus.needsConfirmation) return false;
+        } else if (attentionFilter === "past_draft") {
+          const draftStatus = getDraftDateStatus(policy.draft_date, policy.status);
+          if (draftStatus.isFuture || !policy.draft_date) return false;
+        } else if (attentionFilter === "future_draft") {
+          const draftStatus = getDraftDateStatus(policy.draft_date, policy.status);
+          if (!draftStatus.isFuture) return false;
+        }
+        
+        return true;
       });
     }
     
@@ -329,9 +391,13 @@ export default function FixedPoliciesPage() {
       total: handledPolicies.length,
       needsConfirmation: 0,
       uniqueAgents: 0,
+      pastDraftDate: 0,
+      avgBusinessDaysPast: 0,
+      maxBusinessDaysPast: 0,
     };
 
     const uniqueAgentsSet = new Set<string>();
+    const pastDraftBusinessDays: number[] = [];
 
     handledPolicies.forEach((policy) => {
       // Count unique agents
@@ -345,9 +411,25 @@ export default function FixedPoliciesPage() {
       if (draftStatus.needsConfirmation) {
         stats.needsConfirmation++;
       }
+      
+      // Count policies with passed draft dates
+      if (!draftStatus.isFuture && policy.draft_date) {
+        stats.pastDraftDate++;
+        pastDraftBusinessDays.push(draftStatus.businessDaysSince);
+        if (draftStatus.businessDaysSince > stats.maxBusinessDaysPast) {
+          stats.maxBusinessDaysPast = draftStatus.businessDaysSince;
+        }
+      }
     });
 
     stats.uniqueAgents = uniqueAgentsSet.size;
+    
+    // Calculate average business days past
+    if (pastDraftBusinessDays.length > 0) {
+      stats.avgBusinessDaysPast = Math.round(
+        (pastDraftBusinessDays.reduce((sum, days) => sum + days, 0) / pastDraftBusinessDays.length) * 10
+      ) / 10;
+    }
 
     return stats;
   }, [handledPolicies]);
@@ -364,6 +446,23 @@ export default function FixedPoliciesPage() {
 
   const getNextStatus = (policy: FixedPolicyRow): string => {
     const nextStatus = getNextFixedStatus(policy.status_when_fixed);
+    return nextStatus ?? "—";
+  };
+
+  // Helper functions for handled policies
+  const getHandledCurrentStatus = (policy: any): string => {
+    return (
+      policy.monday_com_deals?.policy_status ??
+      policy.monday_com_deals?.ghl_stage ??
+      policy.monday_com_deals?.status ??
+      policy.status ??
+      "—"
+    );
+  };
+
+  const getHandledNextStatus = (policy: any): string => {
+    const statusWhenFixed = policy.status ?? getHandledCurrentStatus(policy);
+    const nextStatus = getNextFixedStatus(statusWhenFixed);
     return nextStatus ?? "—";
   };
 
@@ -452,27 +551,41 @@ export default function FixedPoliciesPage() {
                 </SelectContent>
               </Select>
               )}
-              {viewMode === "fixed" && (
               <Select value={attentionFilter} onValueChange={setAttentionFilter}>
                 <SelectTrigger className="w-[200px]">
                   <SelectValue placeholder="All Policies" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Policies</SelectItem>
-                  <SelectItem value="needs_confirmation">
-                    ⚠️ Needs Confirmation ({summaryStats.needsConfirmation})
-                  </SelectItem>
-                  <SelectItem value="future_draft">
-                    📅 Future Draft ({summaryStats.futureDraft})
-                  </SelectItem>
+                  {viewMode === "handled" ? (
+                    <>
+                      <SelectItem value="needs_confirmation">
+                        ⚠️ Needs Attention ({handledStats.needsConfirmation})
+                      </SelectItem>
+                      <SelectItem value="past_draft">
+                        📅 Past Draft Date ({handledStats.pastDraftDate})
+                      </SelectItem>
+                      <SelectItem value="future_draft">
+                        🔮 Future Draft
+                      </SelectItem>
+                    </>
+                  ) : (
+                    <>
+                      <SelectItem value="needs_confirmation">
+                        ⚠️ Needs Confirmation ({summaryStats.needsConfirmation})
+                      </SelectItem>
+                      <SelectItem value="future_draft">
+                        📅 Future Draft ({summaryStats.futureDraft})
+                      </SelectItem>
+                    </>
+                  )}
                 </SelectContent>
               </Select>
-              )}
             </div>
 
             {/* Summary Cards for Handled View */}
             {viewMode === "handled" && handledPolicies.length > 0 && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <Card>
                   <CardContent className="p-4">
                     <div className="text-sm text-muted-foreground">Total Handled</div>
@@ -486,7 +599,7 @@ export default function FixedPoliciesPage() {
                   <CardContent className="p-4">
                     <div className="text-sm text-muted-foreground flex items-center gap-2">
                       <AlertCircle className="h-4 w-4" />
-                      Needs Confirmation
+                      Needs Attention
                     </div>
                     <div className={`text-2xl font-bold ${handledStats.needsConfirmation > 0 ? "text-destructive" : ""}`}>
                       {handledStats.needsConfirmation}
@@ -494,6 +607,30 @@ export default function FixedPoliciesPage() {
                     <div className="text-xs text-muted-foreground mt-1">
                       Past 2+ business days from draft
                     </div>
+                    {handledStats.needsConfirmation > 0 && handledStats.avgBusinessDaysPast > 0 && (
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Avg: {handledStats.avgBusinessDaysPast} business days
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+                <Card className={handledStats.pastDraftDate > 0 ? "border-orange-500" : ""}>
+                  <CardContent className="p-4">
+                    <div className="text-sm text-muted-foreground flex items-center gap-2">
+                      <Clock className="h-4 w-4" />
+                      Past Draft Date
+                    </div>
+                    <div className={`text-2xl font-bold ${handledStats.pastDraftDate > 0 ? "text-orange-600 dark:text-orange-400" : ""}`}>
+                      {handledStats.pastDraftDate}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      Draft date has passed
+                    </div>
+                    {handledStats.pastDraftDate > 0 && handledStats.maxBusinessDaysPast > 0 && (
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Max: {handledStats.maxBusinessDaysPast} business days
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
                 <Card>
@@ -607,10 +744,14 @@ export default function FixedPoliciesPage() {
                       </>
                     ) : (
                       <>
-                        <TableHead>Status</TableHead>
+                        <TableHead>Status When Handled</TableHead>
+                        <TableHead>Current Status</TableHead>
+                        <TableHead>Next Fixed Status</TableHead>
                         <TableHead>Draft Date</TableHead>
+                        <TableHead>Draft Status</TableHead>
+                        <TableHead>Days Past Draft</TableHead>
                         <TableHead>Handled Date</TableHead>
-                        <TableHead>Action</TableHead>
+                        <TableHead>Actions</TableHead>
                       </>
                     )}
                     <TableHead>Notes</TableHead>
@@ -621,58 +762,147 @@ export default function FixedPoliciesPage() {
                     <>
                       {loading && handledPolicies.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={10} className="text-center py-8">
+                        <TableCell colSpan={12} className="text-center py-8">
                           <Loader2 className="h-6 w-6 animate-spin mx-auto" />
                         </TableCell>
                       </TableRow>
                     ) : handledPolicies.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">
                           No handled policies found
                         </TableCell>
                       </TableRow>
                     ) : (
                       filteredPolicies
-                        .map((policy) => (
-                          <TableRow key={policy.submission_id}>
-                            <TableCell className="font-mono text-sm">
-                              {policy.monday_com_deals?.policy_number ?? policy.policy_number ?? "—"}
-                            </TableCell>
-                            <TableCell>
-                              {policy.monday_com_deals?.ghl_name ?? policy.monday_com_deals?.deal_name ?? "—"}
-                            </TableCell>
-                            <TableCell>{policy.monday_com_deals?.carrier ?? policy.carrier ?? "—"}</TableCell>
-                            <TableCell>{policy.retention_agent ?? "—"}</TableCell>
-                            <TableCell>
-                              <Badge variant="secondary">{policy.status ?? "—"}</Badge>
-                            </TableCell>
-                            <TableCell>
-                              {formatEasternDate(policy.draft_date)}
-                            </TableCell>
-                            <TableCell className="text-sm text-muted-foreground">
-                              {formatEasternDate(policy.updated_at)}
-                            </TableCell>
-                            <TableCell>
-                              <Button
-                                size="sm"
-                                onClick={() => void handleMarkAsFixed(policy)}
-                                disabled={markingAsFixed === policy.submission_id}
-                              >
-                                {markingAsFixed === policy.submission_id ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
+                        .map((policy) => {
+                          const draftStatus = getDraftDateStatus(policy.draft_date, policy.status);
+                          const currentStatus = getHandledCurrentStatus(policy);
+                          const nextStatus = getHandledNextStatus(policy);
+                          const statusWhenHandled = policy.status ?? "—";
+                          const hasPassedDraftDate = !draftStatus.isFuture && policy.draft_date;
+                          
+                          return (
+                            <TableRow 
+                              key={policy.submission_id}
+                              className={hasPassedDraftDate ? "bg-red-500/10 hover:bg-red-500/15" : ""}
+                            >
+                              <TableCell className="font-mono text-sm">
+                                {policy.monday_com_deals?.policy_number ?? policy.policy_number ?? "—"}
+                              </TableCell>
+                              <TableCell>
+                                {policy.monday_com_deals?.ghl_name ?? policy.monday_com_deals?.deal_name ?? "—"}
+                              </TableCell>
+                              <TableCell>{policy.monday_com_deals?.carrier ?? policy.carrier ?? "—"}</TableCell>
+                              <TableCell className="font-medium">{policy.retention_agent ?? "—"}</TableCell>
+                              <TableCell>
+                                <Badge variant="secondary">{statusWhenHandled}</Badge>
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant="outline">{currentStatus}</Badge>
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant={nextStatus !== "—" ? "default" : "secondary"}>{nextStatus}</Badge>
+                              </TableCell>
+                              <TableCell>
+                                {policy.draft_date ? (
+                                  <div className="flex flex-col gap-1">
+                                    <span className="font-medium">{formatEasternDate(policy.draft_date)}</span>
+                                    {draftStatus.isFuture && (
+                                      <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                        <Clock className="h-3 w-3" />
+                                        Future date
+                                      </span>
+                                    )}
+                                  </div>
                                 ) : (
-                                  <>
-                                    <Check className="h-4 w-4 mr-1" />
-                                    Mark as Fixed
-                                  </>
+                                  "—"
                                 )}
-                              </Button>
-                            </TableCell>
-                            <TableCell className="max-w-xs truncate" title={policy.notes ?? ""}>
-                              {policy.notes ?? "—"}
-                            </TableCell>
-                          </TableRow>
-                        ))
+                              </TableCell>
+                              <TableCell>
+                                {policy.draft_date ? (
+                                  <div className="flex flex-col gap-1">
+                                    <Badge 
+                                      variant={
+                                        draftStatus.statusVariant === "warning" 
+                                          ? "default" 
+                                          : draftStatus.statusVariant === "success"
+                                          ? "default"
+                                          : draftStatus.statusVariant === "destructive"
+                                          ? "destructive"
+                                          : draftStatus.statusVariant === "secondary"
+                                          ? "secondary"
+                                          : "default"
+                                      }
+                                      className="w-fit"
+                                    >
+                                      {draftStatus.statusMessage}
+                                    </Badge>
+                                    {draftStatus.confirmationMessage && (
+                                      <div className="text-xs text-destructive font-medium flex items-center gap-1 mt-1">
+                                        <AlertCircle className="h-3 w-3" />
+                                        {draftStatus.confirmationMessage}
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <Badge variant="secondary">No draft date</Badge>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                {hasPassedDraftDate ? (
+                                  <div className="flex flex-col gap-1">
+                                    <span className="font-medium text-destructive">
+                                      {draftStatus.businessDaysSince} {draftStatus.businessDaysSince === 1 ? "day" : "days"}
+                                    </span>
+                                    <span className="text-xs text-muted-foreground">past draft</span>
+                                  </div>
+                                ) : (
+                                  "—"
+                                )}
+                              </TableCell>
+                              <TableCell className="text-sm text-muted-foreground">
+                                {formatEasternDate(policy.updated_at)}
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant="default"
+                                    onClick={() => void handleMarkAsFixed(policy)}
+                                    disabled={markingAsFixed === policy.submission_id || rejectingPolicy === policy.submission_id}
+                                  >
+                                    {markingAsFixed === policy.submission_id ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <>
+                                        <Check className="h-4 w-4 mr-1" />
+                                        Fixed
+                                      </>
+                                    )}
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="destructive"
+                                    onClick={() => void handleReject(policy)}
+                                    disabled={rejectingPolicy === policy.submission_id || markingAsFixed === policy.submission_id}
+                                  >
+                                    {rejectingPolicy === policy.submission_id ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <>
+                                        <X className="h-4 w-4 mr-1" />
+                                        Reject
+                                      </>
+                                    )}
+                                  </Button>
+                                </div>
+                              </TableCell>
+                              <TableCell className="max-w-xs truncate" title={policy.notes ?? ""}>
+                                {policy.notes ?? "—"}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })
                       )}
                     </>
                   ) : (

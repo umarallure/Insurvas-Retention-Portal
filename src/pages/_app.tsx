@@ -11,7 +11,7 @@ import { DashboardProvider } from "@/components/dashboard-context";
 import { AccessGate, AccessProvider } from "@/components/access-context";
 import { CommandPalette } from "@/components/command-palette";
 import { NotificationsSlideover } from "@/components/notifications-slideover";
-import { AircallWidget } from "@/components/aircall/aircall-widget";
+import { CloudTalkWidget } from "@/components/cloudtalk/cloudtalk-widget";
 import { supabase } from "@/lib/supabase";
 import { ToastContainer } from "react-toastify";
 import { useTheme } from "next-themes";
@@ -107,7 +107,7 @@ export default function App({ Component, pageProps }: AppProps) {
                   </DashboardShell>
                 </AccessGate>
               )}
-              {isAuthPage ? null : <AircallWidget />}
+              {isAuthPage ? null : <CloudTalkWidget />}
               <CommandPalette />
               <NotificationsSlideover />
               <Toaster />

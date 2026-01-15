@@ -40,14 +40,17 @@ export default function LoginPage() {
       }
 
       if (data.user && data.session) {
-        try {
-          window.localStorage.setItem("sb-session", JSON.stringify(data.session));
-        } catch {
-          // ignore storage errors
-          console.error("Failed to save session to localStorage");
+        // Supabase handles session storage automatically, but we can verify it's set
+        // Wait a moment for session to be fully established before redirecting
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        
+        // Verify session is set
+        const { data: { session: verifySession } } = await supabase.auth.getSession();
+        if (verifySession) {
+          router.push("/landing");
+        } else {
+          setError("Session not established. Please try again.");
         }
-
-        router.push("/landing");
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "An error occurred during login";
