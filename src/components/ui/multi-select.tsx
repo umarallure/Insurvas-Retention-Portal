@@ -16,6 +16,7 @@ interface MultiSelectProps {
   className?: string;
   showAllOption?: boolean;
   allOptionLabel?: string;
+  disabled?: boolean;
 }
 
 export function MultiSelect({
@@ -26,6 +27,7 @@ export function MultiSelect({
   className,
   showAllOption = false,
   allOptionLabel = "All",
+  disabled = false,
 }: MultiSelectProps) {
   const [open, setOpen] = React.useState(false);
 
@@ -60,6 +62,7 @@ export function MultiSelect({
           variant="outline"
           role="combobox"
           className={cn("w-full justify-between", className)}
+          disabled={disabled}
         >
           <div className="flex flex-wrap gap-1 flex-1 min-w-0">
             {selected.length === 0 || (showAllOption && isAllSelected) ? (

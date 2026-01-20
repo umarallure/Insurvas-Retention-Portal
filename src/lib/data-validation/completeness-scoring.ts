@@ -32,30 +32,32 @@ export async function calculateDealCompleteness(
   dealId: number
 ): Promise<DealCompleteness | null> {
   try {
-    // Fetch deal and related data
-    const [dealData, leadData, dealFlowData] = await Promise.all([
-      supabase.from("monday_com_deals").select("*").eq("id", dealId).maybeSingle(),
-      supabase
-        .from("leads")
-        .select("*")
-        .eq("submission_id", dealData.data?.monday_item_id ?? "")
-        .maybeSingle(),
-      supabase
-        .from("daily_deal_flow")
-        .select("*")
-        .eq("submission_id", dealData.data?.monday_item_id ?? "")
-        .maybeSingle(),
-    ]);
-
+    // Fetch deal first
+    const dealData = await supabase.from("monday_com_deals").select("*").eq("id", dealId).maybeSingle();
     const deal = dealData.data;
-    const lead = leadData.data;
-    const dealFlow = dealFlowData.data;
 
     if (!deal) {
       return null;
     }
 
     const submissionId = deal.monday_item_id ?? "";
+
+    // Then fetch related data using the deal's submission_id
+    const [leadData, dealFlowData] = await Promise.all([
+      supabase
+        .from("leads")
+        .select("*")
+        .eq("submission_id", submissionId)
+        .maybeSingle(),
+      supabase
+        .from("daily_deal_flow")
+        .select("*")
+        .eq("submission_id", submissionId)
+        .maybeSingle(),
+    ]);
+
+    const lead = leadData.data;
+    const dealFlow = dealFlowData.data;
 
     // Required fields for monday_com_deals
     const dealRequired = [

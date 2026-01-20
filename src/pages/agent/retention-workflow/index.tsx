@@ -638,7 +638,7 @@ export default function RetentionWorkflowPage() {
       const finalCarrier = fullDealData?.carrier ?? deal.carrier;
       const finalProductType = fullDealData?.policy_type ?? null;
       // Get sales agent from database or leadInfo
-      const finalSalesAgent = (typeof fullDealData?.sales_agent === "string" ? fullDealData.sales_agent : null) ?? leadInfoFromRoute.agentName || null;
+      const finalSalesAgent = ((typeof fullDealData?.sales_agent === "string" ? fullDealData.sales_agent : null) ?? leadInfoFromRoute.agentName) ?? null;
       // Use deal_value as monthly_premium fallback, cc_value as face_amount fallback
       const finalMonthlyPremium = typeof fullDealData?.deal_value === "number" ? fullDealData.deal_value : null;
       const finalFaceAmount = typeof fullDealData?.cc_value === "number" ? fullDealData.cc_value : null;

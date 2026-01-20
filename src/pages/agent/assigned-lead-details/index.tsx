@@ -290,11 +290,11 @@ export default function AssignedLeadDetailsPage() {
                         {(selectedDeal?.monday_item_id || lead?.submission_id) ? (
                           <>
                             <DataValidationPanel
-                              submissionId={selectedDeal?.monday_item_id ?? lead?.submission_id ?? ""}
+                              submissionId={String(selectedDeal?.monday_item_id ?? lead?.submission_id ?? "")}
                               dealId={selectedPolicyView ? (selectedPolicyView.raw as { id?: number })?.id ?? undefined : undefined}
                             />
                             <ActivityTimeline
-                              submissionId={selectedDeal?.monday_item_id ?? lead?.submission_id ?? ""}
+                              submissionId={String(selectedDeal?.monday_item_id ?? lead?.submission_id ?? "")}
                             />
                           </>
                         ) : (
