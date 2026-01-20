@@ -15,8 +15,7 @@ import {
 
 import type { Period } from "@/types";
 import type { DateRange } from "react-day-picker";
-import type { Sale, SaleStatus } from "@/types";
-import { getRecentSales } from "@/lib/dashboard-stats";
+import { getRecentSales, type RecentSale } from "@/lib/dashboard-stats";
 
 const sampleEmails = [
   "james.anderson@example.com",
@@ -26,7 +25,7 @@ const sampleEmails = [
   "ethan.harris@example.com",
 ];
 
-function statusBadge(status: SaleStatus) {
+function statusBadge(status: "paid" | "failed" | "pending") {
   const className =
     status === "paid"
       ? "bg-green-500/10 text-green-700 dark:text-green-300"
@@ -42,7 +41,7 @@ function statusBadge(status: SaleStatus) {
 }
 
 export function HomeSales({ period, range }: { period: Period; range: DateRange }) {
-  const [rows, setRows] = React.useState<Sale[]>([]);
+  const [rows, setRows] = React.useState<RecentSale[]>([]);
   const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {
