@@ -124,8 +124,8 @@ export default async function handler(
     // For now, we'll store it in a way that can be accessed via API
     // The frontend can poll /api/cloudtalk/webhook/latest or use real-time subscriptions
     
-    // Store the latest contact for frontend access
-    updateLatestContact(phoneNumber, leadId, dealId);
+    // Store the latest contact for frontend access (async, don't await to avoid blocking)
+    void updateLatestContact(phoneNumber, leadId, dealId);
 
     console.log(`[CloudTalk Webhook] Call answered for: ${phoneNumber}`, {
       leadId,
