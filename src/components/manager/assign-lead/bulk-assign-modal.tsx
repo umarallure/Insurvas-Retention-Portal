@@ -592,7 +592,7 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
           throw lastError;
         }
 
-        // Add contacts to CloudTalk (non-blocking, in background)
+        // Sync contacts to VICIdial (non-blocking, in background)
         // Get phone numbers and names for this batch
         const batchDealIds = batch.map((p) => p.deal_id);
         const batchIdentities = batchDealIds
@@ -604,12 +604,12 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
           })
           .filter((v): v is { identity: DealIdentityRow; assignee: string } => !!v);
 
-        // Add to CloudTalk in parallel (don't await - fire and forget)
+        // Add to VICIdial in parallel (don't await - fire and forget)
         for (const { identity, assignee } of batchIdentities) {
           if (identity.phone_number && identity.phone_number.trim()) {
             const fullName = identity.ghl_name || identity.deal_name || "";
             // Fire and forget - don't block assignment
-            fetch("/api/cloudtalk/contact/add", {
+            fetch("/api/vicidial/add-lead", {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
@@ -618,10 +618,11 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
                 phone_number: identity.phone_number,
                 full_name: fullName,
                 agent_profile_id: assignee,
-                deal_id: identity.id, // Include deal_id for external URL in CloudTalk
+                vendor_lead_code: identity.id,
+                comments: "Bulk assigned from Retention Portal",
               }),
             }).catch((err) => {
-              console.warn("[CloudTalk] Failed to add contact in bulk:", err);
+              console.warn("[VICIdial] Failed to sync lead in bulk:", err);
             });
           }
         }
