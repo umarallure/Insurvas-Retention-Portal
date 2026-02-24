@@ -1,14 +1,11 @@
 "use client";
 
 import React, { useCallback, useEffect, useState, useMemo } from "react";
-import Link from "next/link";
-import { useRouter } from "next/router";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { supabase } from "@/lib/supabase";
 import {
   PhoneIcon,
@@ -38,16 +35,19 @@ type QueueLeadRow = {
 };
 
 export default function AgentDialerDashboard() {
-  const router = useRouter();
   const [queueLeads, setQueueLeads] = useState<QueueLeadRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [sessionActive, setSessionActive] = useState(false);
   const [sessionStartTime, setSessionStartTime] = useState<Date | null>(null);
+  const [sessionUpdating, setSessionUpdating] = useState(false);
+  const [callingLeadId, setCallingLeadId] = useState<string | null>(null);
+  const [dialerMessage, setDialerMessage] = useState<string | null>(null);
+  const [dialerError, setDialerError] = useState<string | null>(null);
 
-  // CloudTalk partner name from env
-  const partnerName = process.env.NEXT_PUBLIC_CLOUDTALK_PARTNER_NAME || "unlimitedinsurance";
-  const iframeSrc = `https://phone.cloudtalk.io?partner=${partnerName}`;
+  const vicidialUrl = process.env.NEXT_PUBLIC_VICIDIAL_AGENT_URL || process.env.NEXT_PUBLIC_VICIDIAL_URL || "";
+  const vicidialAgentUser = process.env.NEXT_PUBLIC_VICIDIAL_AGENT_USER || "";
+  const vicidialCampaignId = process.env.NEXT_PUBLIC_VICIDIAL_CAMPAIGN_ID || undefined;
 
   // Load assigned leads queue
   const loadQueue = useCallback(async () => {
@@ -122,14 +122,111 @@ export default function AgentDialerDashboard() {
     void loadQueue();
   };
 
-  const handleStartSession = () => {
-    setSessionActive(true);
-    setSessionStartTime(new Date());
+  const handleStartSession = async () => {
+    if (!vicidialAgentUser) {
+      setDialerError("Missing NEXT_PUBLIC_VICIDIAL_AGENT_USER");
+      return;
+    }
+    setSessionUpdating(true);
+    setDialerError(null);
+    setDialerMessage(null);
+    try {
+      const response = await fetch("/api/vicidial/agent-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agent_user: vicidialAgentUser,
+          status: "READY",
+          campaign_id: vicidialCampaignId,
+        }),
+      });
+      const result = (await response.json()) as { ok?: boolean; raw?: string };
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.raw || "Failed to set agent READY");
+      }
+      setSessionActive(true);
+      setSessionStartTime(new Date());
+      setDialerMessage("Agent status set to READY");
+    } catch (error) {
+      setDialerError(error instanceof Error ? error.message : "Failed to start session");
+    } finally {
+      setSessionUpdating(false);
+    }
   };
 
-  const handleEndSession = () => {
-    setSessionActive(false);
-    setSessionStartTime(null);
+  const handleEndSession = async () => {
+    if (!vicidialAgentUser) {
+      setDialerError("Missing NEXT_PUBLIC_VICIDIAL_AGENT_USER");
+      return;
+    }
+    setSessionUpdating(true);
+    setDialerError(null);
+    setDialerMessage(null);
+    try {
+      await fetch("/api/vicidial/hangup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agent_user: vicidialAgentUser,
+          campaign_id: vicidialCampaignId,
+        }),
+      });
+      const response = await fetch("/api/vicidial/agent-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agent_user: vicidialAgentUser,
+          status: "PAUSE",
+          campaign_id: vicidialCampaignId,
+        }),
+      });
+      const result = (await response.json()) as { ok?: boolean; raw?: string };
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.raw || "Failed to pause agent");
+      }
+      setSessionActive(false);
+      setSessionStartTime(null);
+      setDialerMessage("Agent paused");
+    } catch (error) {
+      setDialerError(error instanceof Error ? error.message : "Failed to end session");
+    } finally {
+      setSessionUpdating(false);
+    }
+  };
+
+  const handleDialLead = async (lead: QueueLeadRow) => {
+    if (!vicidialAgentUser) {
+      setDialerError("Missing NEXT_PUBLIC_VICIDIAL_AGENT_USER");
+      return;
+    }
+    const phone = lead.deal?.phone_number?.trim();
+    if (!phone) {
+      setDialerError("Selected lead has no phone number");
+      return;
+    }
+    setCallingLeadId(lead.id);
+    setDialerError(null);
+    setDialerMessage(null);
+    try {
+      const response = await fetch("/api/vicidial/dial", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone_number: phone,
+          agent_user: vicidialAgentUser,
+          campaign_id: vicidialCampaignId,
+        }),
+      });
+      const result = (await response.json()) as { ok?: boolean; raw?: string };
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.raw || "Failed to dial");
+      }
+      setDialerMessage(`Dial request sent for ${phone}`);
+    } catch (error) {
+      setDialerError(error instanceof Error ? error.message : "Failed to dial");
+    } finally {
+      setCallingLeadId(null);
+    }
   };
 
   // Session duration display
@@ -171,14 +268,17 @@ export default function AgentDialerDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {dialerError ? <div className="text-xs text-destructive">{dialerError}</div> : null}
+            {dialerMessage ? <div className="text-xs text-green-600">{dialerMessage}</div> : null}
             {!sessionActive ? (
               <Button 
                 className="w-full gap-2" 
                 size="lg"
                 onClick={handleStartSession}
+                disabled={sessionUpdating}
               >
                 <PlayCircleIcon className="h-5 w-5" />
-                Start Dialing Session
+                {sessionUpdating ? "Starting..." : "Start Dialing Session"}
               </Button>
             ) : (
               <div className="space-y-3">
@@ -204,8 +304,9 @@ export default function AgentDialerDashboard() {
                   variant="outline" 
                   className="w-full" 
                   onClick={handleEndSession}
+                  disabled={sessionUpdating}
                 >
-                  End Session
+                  {sessionUpdating ? "Ending..." : "End Session"}
                 </Button>
               </div>
             )}
@@ -296,6 +397,18 @@ export default function AgentDialerDashboard() {
                           >
                             <ExternalLinkIcon className="h-3.5 w-3.5" />
                           </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 px-2 text-[11px]"
+                            disabled={!lead.deal?.phone_number || callingLeadId === lead.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleDialLead(lead);
+                            }}
+                          >
+                            {callingLeadId === lead.id ? "Calling..." : "Call"}
+                          </Button>
                         </div>
                       </div>
                     );
@@ -312,7 +425,7 @@ export default function AgentDialerDashboard() {
             <div className="space-y-2 text-xs text-muted-foreground">
               <div className="flex items-start gap-2">
                 <CheckCircle2Icon className="h-3.5 w-3.5 mt-0.5 text-green-500 flex-shrink-0" />
-                <span>When call connects, click <strong>"Lead Details"</strong> in CloudTalk</span>
+                <span>When call connects, open <strong>&quot;Lead Details&quot;</strong> from the queue</span>
               </div>
               <div className="flex items-start gap-2">
                 <CheckCircle2Icon className="h-3.5 w-3.5 mt-0.5 text-green-500 flex-shrink-0" />
@@ -327,13 +440,13 @@ export default function AgentDialerDashboard() {
         </Card>
       </div>
 
-      {/* Right Panel - CloudTalk Dialer (Full Height) */}
+      {/* Right Panel - VICIdial (Full Height) */}
       <Card className="flex-1 flex flex-col overflow-hidden">
         <CardHeader className="pb-3 flex-shrink-0 border-b">
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2">
               <PhoneIcon className="h-5 w-5" />
-              CloudTalk Dialer
+              VICIdial
             </CardTitle>
             <Badge variant={sessionActive ? "default" : "secondary"}>
               {sessionActive ? "Active" : "Inactive"}
@@ -341,12 +454,18 @@ export default function AgentDialerDashboard() {
           </div>
         </CardHeader>
         <CardContent className="flex-1 p-0 relative">
-          <iframe
-            src={iframeSrc}
-            allow="microphone *"
-            className="absolute inset-0 w-full h-full border-0"
-            title="CloudTalk Dialer"
-          />
+          {vicidialUrl ? (
+            <iframe
+              src={vicidialUrl}
+              allow="microphone *"
+              className="absolute inset-0 w-full h-full border-0"
+              title="VICIdial Agent"
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
+              Missing <code className="mx-1">NEXT_PUBLIC_VICIDIAL_AGENT_URL</code> env var.
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
