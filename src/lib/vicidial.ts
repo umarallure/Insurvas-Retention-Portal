@@ -32,14 +32,15 @@ function parseVicidialResponse(raw: string): Record<string, string> {
   return parsed;
 }
 
-export async function callVicidialNonAgentApi(
+async function callVicidialNonAgentApiInternal(
+  baseUrl: string,
+  user: string,
+  pass: string,
+  source: string,
   fn: string,
   inputParams: VicidialParams = {},
 ): Promise<VicidialApiResult> {
-  const baseUrl = getRequiredEnv("VICIDIAL_BASE_URL").replace(/\/+$/, "");
-  const user = getRequiredEnv("VICIDIAL_API_USER");
-  const pass = getRequiredEnv("VICIDIAL_API_PASS");
-  const source = process.env.VICIDIAL_API_SOURCE ?? "retention_portal";
+  const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
 
   const body = new URLSearchParams();
   body.set("source", source);
@@ -52,7 +53,7 @@ export async function callVicidialNonAgentApi(
     body.set(key, String(value));
   }
 
-  const response = await fetch(`${baseUrl}/non_agent_api.php`, {
+  const response = await fetch(`${normalizedBaseUrl}/non_agent_api.php`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
@@ -67,6 +68,28 @@ export async function callVicidialNonAgentApi(
     raw,
     parsed: parseVicidialResponse(raw),
   };
+}
+
+export async function callVicidialNonAgentApi(
+  fn: string,
+  inputParams: VicidialParams = {},
+): Promise<VicidialApiResult> {
+  const baseUrl = getRequiredEnv("VICIDIAL_BASE_URL");
+  const user = getRequiredEnv("VICIDIAL_API_USER");
+  const pass = getRequiredEnv("VICIDIAL_API_PASS");
+  const source = process.env.VICIDIAL_API_SOURCE ?? "retention_portal";
+  return callVicidialNonAgentApiInternal(baseUrl, user, pass, source, fn, inputParams);
+}
+
+export async function callVicidialAssignmentApi(
+  fn: string,
+  inputParams: VicidialParams = {},
+): Promise<VicidialApiResult> {
+  const baseUrl = process.env.VICIDIAL_ASSIGN_BASE_URL ?? getRequiredEnv("VICIDIAL_BASE_URL");
+  const user = process.env.VICIDIAL_ASSIGN_API_USER ?? getRequiredEnv("VICIDIAL_API_USER");
+  const pass = process.env.VICIDIAL_ASSIGN_API_PASS ?? getRequiredEnv("VICIDIAL_API_PASS");
+  const source = process.env.VICIDIAL_ASSIGN_API_SOURCE ?? process.env.VICIDIAL_API_SOURCE ?? "retention_portal";
+  return callVicidialNonAgentApiInternal(baseUrl, user, pass, source, fn, inputParams);
 }
 
 export async function callVicidialAgentApi(

@@ -892,6 +892,7 @@ export default function ManagerAssignLeadPage() {
               phone_number: activeLead.phone_number,
               full_name: activeLead.display_name,
               agent_profile_id: selectedAgentId,
+              deal_id: activeLead.deal_id,
               vendor_lead_code: activeLead.deal_id ?? undefined,
               comments: "Assigned from Retention Portal",
             }),

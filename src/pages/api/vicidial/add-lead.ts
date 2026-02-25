@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { callVicidialNonAgentApi, type VicidialParams } from "@/lib/vicidial";
+import { callVicidialAssignmentApi, type VicidialParams } from "@/lib/vicidial";
+import { buildLeadDetailsUrl, getVicidialAgentMapping } from "@/lib/vicidial-agent-mapping";
 
 type AddLeadRequestBody = {
   phone_number?: string;
@@ -9,6 +10,7 @@ type AddLeadRequestBody = {
   agent_profile_id?: string;
   campaign_id?: string;
   list_id?: string | number;
+  deal_id?: number;
   phone_code?: string | number;
   vendor_lead_code?: string | number;
   source_id?: string | number;
@@ -60,7 +62,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   const body = (req.body ?? {}) as AddLeadRequestBody;
-  const fn = body.vicidial_function ?? process.env.VICIDIAL_FUNCTION_ADD_LEAD ?? "add_lead";
+  const fn =
+    body.vicidial_function ??
+    process.env.VICIDIAL_ASSIGN_FUNCTION_ADD_LEAD ??
+    process.env.VICIDIAL_FUNCTION_ADD_LEAD ??
+    "add_lead";
 
   if (!body.phone_number) {
     return res.status(400).json({
@@ -73,9 +79,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   try {
     const phoneNumber = normalizeUsPhone(body.phone_number);
     const names = splitName(body.full_name, body.first_name, body.last_name);
-    const campaignId = body.campaign_id ?? process.env.VICIDIAL_DEFAULT_CAMPAIGN_ID;
-    const listId = body.list_id ?? process.env.VICIDIAL_DEFAULT_LIST_ID;
-    const phoneCode = body.phone_code ?? process.env.VICIDIAL_DEFAULT_PHONE_CODE ?? "1";
+    const mapping = getVicidialAgentMapping(body.agent_profile_id ?? null);
+    const campaignId =
+      body.campaign_id ??
+      mapping?.campaignId ??
+      process.env.VICIDIAL_ASSIGN_DEFAULT_CAMPAIGN_ID ??
+      process.env.VICIDIAL_DEFAULT_CAMPAIGN_ID;
+    const listId =
+      body.list_id ??
+      mapping?.listId ??
+      process.env.VICIDIAL_ASSIGN_DEFAULT_LIST_ID ??
+      process.env.VICIDIAL_DEFAULT_LIST_ID;
+    const phoneCode =
+      body.phone_code ?? process.env.VICIDIAL_ASSIGN_DEFAULT_PHONE_CODE ?? process.env.VICIDIAL_DEFAULT_PHONE_CODE ?? "1";
+    const webformUrl = buildLeadDetailsUrl(body.deal_id);
+    const mappedUser = mapping?.vicidialUser ?? null;
+    const comments = [body.comments?.trim(), webformUrl ? `Lead Details: ${webformUrl}` : null]
+      .filter((v): v is string => Boolean(v && v.length))
+      .join(" | ");
 
     const params: VicidialParams = {
       phone_number: phoneNumber,
@@ -85,12 +106,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       campaign_id: campaignId,
       list_id: listId,
       vendor_lead_code: body.vendor_lead_code,
-      source_id: body.source_id ?? body.agent_profile_id ?? null,
-      comments: body.comments,
+      source_id: body.source_id ?? body.agent_profile_id ?? mappedUser ?? null,
+      comments: comments || undefined,
       ...(body.extra_params ?? {}),
     };
 
-    const result = await callVicidialNonAgentApi(fn, params);
+    const result = await callVicidialAssignmentApi(fn, params);
+    const vicidialError = result.parsed.ERROR ?? (/\bERROR\b/i.test(result.raw) ? result.raw.trim() : null);
+
+    if (vicidialError) {
+      return res.status(200).json({
+        ok: false,
+        error: "VICIdial add_lead failed",
+        details: vicidialError,
+      });
+    }
 
     return res.status(result.status).json({
       ok: result.ok,

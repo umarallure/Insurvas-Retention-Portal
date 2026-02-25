@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "worker": "tsx worker.ts"
+    "worker": "tsx worker.ts",
+    "vicidial:bootstrap": "tsx scripts/bootstrap_vicidial_agent_mapping.ts",
+    "vicidial:generate-bootstrap": "tsx scripts/generate_vicidial_bootstrap_from_supabase.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

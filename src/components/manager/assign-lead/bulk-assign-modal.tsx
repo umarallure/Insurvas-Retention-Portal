@@ -618,6 +618,7 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
                 phone_number: identity.phone_number,
                 full_name: fullName,
                 agent_profile_id: assignee,
+                deal_id: identity.id,
                 vendor_lead_code: identity.id,
                 comments: "Bulk assigned from Retention Portal",
               }),
