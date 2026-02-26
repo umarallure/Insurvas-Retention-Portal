@@ -1,7 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { callVicidialAssignmentApi } from "@/lib/vicidial";
+import { getVicidialAgentMapping } from "@/lib/vicidial-agent-mapping";
+import { findVicidialLeadIndex, removeVicidialLeadIndex } from "@/lib/vicidial-lead-index";
 
 type UnassignBody = {
+  assignment_id?: string | null;
+  agent_profile_id?: string | null;
   deal_id?: number | string | null;
   phone_number?: string | null;
   list_id?: number | string | null;
@@ -87,17 +91,51 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   try {
     const body = (req.body ?? {}) as UnassignBody;
+    const assignmentId = body.assignment_id != null ? String(body.assignment_id).trim() : "";
+    const agentProfileId = body.agent_profile_id != null ? String(body.agent_profile_id).trim() : "";
+    const mapping = getVicidialAgentMapping(agentProfileId || null);
     const dealId = body.deal_id != null ? String(body.deal_id).trim() : "";
     const phone = normalizePhone(body.phone_number);
-    const listId = body.list_id != null ? String(body.list_id).trim() : "";
+    const listId = body.list_id != null ? String(body.list_id).trim() : mapping?.listId ?? "";
     const statusSet = process.env.VICIDIAL_UNASSIGN_STATUS ?? "ERI";
 
-    if (!dealId && !phone) {
+    if (!assignmentId && !dealId && !phone) {
       return res.status(400).json({
         ok: false,
         error: "Missing identifiers",
-        details: "deal_id or phone_number is required",
+        details: "assignment_id, deal_id, or phone_number is required",
       });
+    }
+
+    const indexed = await findVicidialLeadIndex({
+      assignmentId: assignmentId || undefined,
+      dealId: dealId || undefined,
+      phoneNumber: phone || undefined,
+      listId: listId || undefined,
+      agentProfileId: agentProfileId || undefined,
+    });
+
+    if (indexed?.vicidialLeadId) {
+      const direct = await callVicidialAssignmentApi("update_lead", {
+        lead_id: indexed.vicidialLeadId,
+        status: statusSet,
+        comments: "Unassigned from Retention Portal",
+      });
+      const raws = [direct.raw];
+      if (!/\bERROR\b/i.test(direct.raw)) {
+        await removeVicidialLeadIndex({
+          assignmentId: assignmentId || indexed.assignmentId,
+          vicidialLeadId: indexed.vicidialLeadId,
+        });
+        return res.status(200).json({
+          ok: true,
+          matched: 1,
+          updated: 1,
+          lead_ids: [indexed.vicidialLeadId],
+          status_set: statusSet,
+          raw: raws,
+        });
+      }
     }
 
     const { leadIds, raws } = await findLeadIds(dealId, phone, listId || undefined);
@@ -120,7 +158,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         comments: "Unassigned from Retention Portal",
       });
       raws.push(result.raw);
-      if (!/\bERROR\b/i.test(result.raw)) updated += 1;
+      if (!/\bERROR\b/i.test(result.raw)) {
+        updated += 1;
+        await removeVicidialLeadIndex({
+          assignmentId: assignmentId || undefined,
+          vicidialLeadId: leadId,
+        });
+      }
     }
 
     return res.status(200).json({
@@ -139,4 +183,3 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
   }
 }
-

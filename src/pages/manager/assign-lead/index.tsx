@@ -566,6 +566,8 @@ export default function ManagerAssignLeadPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            assignment_id: activeUnassign.assignmentId,
+            agent_profile_id: currentAssignmentForLead(activeUnassign.row.lead_id)?.assignee_profile_id ?? undefined,
             deal_id: activeUnassign.row.deal_id ?? undefined,
             phone_number: activeUnassign.row.phone_number ?? undefined,
           }),
@@ -599,7 +601,7 @@ export default function ManagerAssignLeadPage() {
     } finally {
       setUnassigning(false);
     }
-  }, [activeUnassign, loadLeadsAndAssignments, toast]);
+  }, [activeUnassign, currentAssignmentForLead, loadLeadsAndAssignments, toast]);
 
   const ensureLeadForRow = useCallback(
     async (row: AssignLeadRow): Promise<string | null> => {
@@ -897,12 +899,16 @@ export default function ManagerAssignLeadPage() {
       // Sync contact to VICIdial (non-blocking)
       if (activeLead.phone_number && selectedAgentId) {
         try {
+          const activeAssignment = activeLead.deal_id
+            ? activeAssignments.find((a) => a.deal_id === activeLead.deal_id && a.assignee_profile_id === selectedAgentId)
+            : null;
           const response = await fetch("/api/vicidial/add-lead", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
+              assignment_id: activeAssignment?.id ?? undefined,
               phone_number: activeLead.phone_number,
               full_name: activeLead.display_name,
               agent_profile_id: selectedAgentId,

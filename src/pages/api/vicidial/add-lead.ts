@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import mysql from "mysql2/promise";
 import { callVicidialAssignmentApi, type VicidialParams } from "@/lib/vicidial";
 import { buildLeadDetailsUrl, getVicidialAgentMapping } from "@/lib/vicidial-agent-mapping";
+import { upsertVicidialLeadIndex } from "@/lib/vicidial-lead-index";
 
 type AddLeadRequestBody = {
   phone_number?: string;
@@ -16,6 +17,7 @@ type AddLeadRequestBody = {
   vendor_lead_code?: string | number;
   source_id?: string | number;
   comments?: string;
+  assignment_id?: string;
   vicidial_function?: string;
   extra_params?: VicidialParams;
 };
@@ -55,6 +57,19 @@ function normalizeUsPhone(input: string) {
   if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
   if (digits.length === 10) return digits;
   return digits;
+}
+
+function parseLeadIdFromRaw(raw: string): number | null {
+  const lines = raw.split("\n").map((v) => v.trim()).filter(Boolean);
+  for (const line of lines) {
+    if (!/^SUCCESS:\s*add_lead\b/i.test(line)) continue;
+    const afterDash = line.split(" - ")[1] ?? "";
+    const parts = afterDash.split("|").map((v) => v.trim());
+    const token = parts[2] ?? "";
+    const n = Number(token);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<VicidialRouteResponse>) {
@@ -153,6 +168,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             comments: params.comments,
           });
           if (!/\bERROR\b/i.test(update.raw)) {
+            await upsertVicidialLeadIndex({
+              assignmentId: body.assignment_id,
+              dealId: body.deal_id != null ? String(body.deal_id) : undefined,
+              phoneNumber,
+              listId: listIdStr,
+              agentProfileId: body.agent_profile_id ?? undefined,
+              vendorLeadCode: vendorCode || undefined,
+              vicidialLeadId: existingLeadId,
+            });
             return res.status(200).json({
               ok: true,
               status: 200,
@@ -177,6 +201,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         ok: false,
         error: "VICIdial add_lead failed",
         details: vicidialError,
+      });
+    }
+
+    const newLeadId = parseLeadIdFromRaw(result.raw);
+    if (newLeadId) {
+      await upsertVicidialLeadIndex({
+        assignmentId: body.assignment_id,
+        dealId: body.deal_id != null ? String(body.deal_id) : undefined,
+        phoneNumber,
+        listId: params.list_id != null ? String(params.list_id) : undefined,
+        agentProfileId: body.agent_profile_id ?? undefined,
+        vendorLeadCode: params.vendor_lead_code != null ? String(params.vendor_lead_code) : undefined,
+        vicidialLeadId: newLeadId,
       });
     }
 

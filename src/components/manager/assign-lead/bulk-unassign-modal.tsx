@@ -260,6 +260,8 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
+              assignment_id: row.id,
+              agent_profile_id: row.assignee_profile_id ?? undefined,
               deal_id: row.deal_id ?? undefined,
               phone_number: row.deal_id ? phoneByDealId.get(row.deal_id) ?? undefined : undefined,
             }),
