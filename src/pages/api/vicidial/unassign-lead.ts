@@ -15,9 +15,9 @@ type UnassignResponse =
   | {
       ok: true;
       matched: number;
-      deleted: number;
+      updated: number;
       lead_ids: number[];
-      action: string;
+      status_set: string;
       raw?: string[];
     }
   | {
@@ -90,14 +90,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   try {
-  const body = (req.body ?? {}) as UnassignBody;
+    const body = (req.body ?? {}) as UnassignBody;
     const assignmentId = body.assignment_id != null ? String(body.assignment_id).trim() : "";
     const agentProfileId = body.agent_profile_id != null ? String(body.agent_profile_id).trim() : "";
     const mapping = getVicidialAgentMapping(agentProfileId || null);
     const dealId = body.deal_id != null ? String(body.deal_id).trim() : "";
     const phone = normalizePhone(body.phone_number);
     const listId = body.list_id != null ? String(body.list_id).trim() : mapping?.listId ?? "";
-    const deleteFn = process.env.VICIDIAL_UNASSIGN_DELETE_FUNCTION ?? "delete_lead";
+    const statusSet = process.env.VICIDIAL_UNASSIGN_STATUS ?? "ERI";
 
     if (!assignmentId && !dealId && !phone) {
       return res.status(400).json({
@@ -116,8 +116,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
 
     if (indexed?.vicidialLeadId) {
-      const direct = await callVicidialAssignmentApi(deleteFn, {
+      const direct = await callVicidialAssignmentApi("update_lead", {
         lead_id: indexed.vicidialLeadId,
+        status: statusSet,
+        comments: "Unassigned from Retention Portal",
       });
       const raws = [direct.raw];
       if (!/\bERROR\b/i.test(direct.raw)) {
@@ -128,18 +130,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         return res.status(200).json({
           ok: true,
           matched: 1,
-          deleted: 1,
+          updated: 1,
           lead_ids: [indexed.vicidialLeadId],
-          action: deleteFn,
+          status_set: statusSet,
           raw: raws,
         });
       }
-      return res.status(200).json({
-        ok: false,
-        error: "VICIdial delete failed",
-        details: direct.raw.trim(),
-        raw: raws,
-      });
     }
 
     const { leadIds, raws } = await findLeadIds(dealId, phone, listId || undefined);
@@ -147,21 +143,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(200).json({
         ok: true,
         matched: 0,
-        deleted: 0,
+        updated: 0,
         lead_ids: [],
-        action: deleteFn,
+        status_set: statusSet,
         raw: raws,
       });
     }
 
-    let deleted = 0;
+    let updated = 0;
     for (const leadId of leadIds) {
-      const result = await callVicidialAssignmentApi(deleteFn, {
+      const result = await callVicidialAssignmentApi("update_lead", {
         lead_id: leadId,
+        status: statusSet,
+        comments: "Unassigned from Retention Portal",
       });
       raws.push(result.raw);
       if (!/\bERROR\b/i.test(result.raw)) {
-        deleted += 1;
+        updated += 1;
         await removeVicidialLeadIndex({
           assignmentId: assignmentId || undefined,
           vicidialLeadId: leadId,
@@ -169,21 +167,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
     }
 
-    if (deleted === 0) {
-      return res.status(200).json({
-        ok: false,
-        error: "VICIdial delete failed",
-        details: "No matching leads were deleted; verify API user permissions for delete_lead.",
-        raw: raws,
-      });
-    }
-
     return res.status(200).json({
       ok: true,
       matched: leadIds.length,
-      deleted,
+      updated,
       lead_ids: leadIds,
-      action: deleteFn,
+      status_set: statusSet,
       raw: raws,
     });
   } catch (error) {

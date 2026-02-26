@@ -7,6 +7,7 @@ type LeadsRequestBody = {
   list_id?: string | number;
   campaign_id?: string;
   limit?: number;
+  include_eri?: boolean;
 };
 
 type LeadRow = {
@@ -62,6 +63,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const listId = body.list_id ?? mapping?.listId;
     const campaignId = body.campaign_id ?? mapping?.campaignId;
     const limit = Math.max(1, Math.min(200, Number(body.limit ?? 50)));
+    const includeEri = body.include_eri === true;
 
     if (!listId) {
       return res.status(400).json({ ok: false, error: "Missing list mapping", details: "list_id or profile_id is required" });
@@ -117,9 +119,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           comments
        FROM vicidial_list
        WHERE list_id = ?
+         AND (? = 1 OR status IS NULL OR status <> 'ERI')
        ORDER BY lead_id DESC
        LIMIT ?`,
-      [String(listId), limit],
+      [String(listId), includeEri ? 1 : 0, limit],
     );
     await conn.end();
 
