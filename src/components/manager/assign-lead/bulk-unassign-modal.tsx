@@ -29,6 +29,7 @@ type BulkUnassignModalProps = {
 type DealRow = {
   id: number;
   monday_item_id: string | null;
+  phone_number?: string | null;
 };
 
 type AssignmentRow = {
@@ -150,7 +151,7 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
       while (true) {
         const dealsQuery = supabase
           .from("monday_com_deals")
-          .select("id,monday_item_id", { count: "exact" })
+          .select("id,monday_item_id,phone_number", { count: "exact" })
           .in("ghl_stage", selectedStages)
           .order("last_updated", { ascending: false, nullsFirst: false })
           .range(offset, offset + PAGE_SIZE - 1);
@@ -230,6 +231,46 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
 
     setDeleting(true);
     try {
+      // Build deal -> phone map for VICIdial cleanup
+      const dealIds = Array.from(
+        new Set(
+          assignedRows
+            .map((r) => (typeof r.deal_id === "number" ? r.deal_id : null))
+            .filter((v): v is number => v != null),
+        ),
+      );
+      const phoneByDealId = new Map<number, string | null>();
+      if (dealIds.length > 0) {
+        for (const dBatch of chunk(dealIds, 1000)) {
+          const { data: deals, error: dealsErr } = await supabase
+            .from("monday_com_deals")
+            .select("id, phone_number")
+            .in("id", dBatch);
+          if (dealsErr) throw dealsErr;
+          for (const d of (deals ?? []) as Array<{ id: number; phone_number?: string | null }>) {
+            phoneByDealId.set(d.id, d.phone_number ?? null);
+          }
+        }
+      }
+
+      // Best-effort VICIdial cleanup per assignment row.
+      for (const row of assignedRows) {
+        try {
+          await fetch("/api/vicidial/unassign-lead", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              assignment_id: row.id,
+              agent_profile_id: row.assignee_profile_id ?? undefined,
+              deal_id: row.deal_id ?? undefined,
+              phone_number: row.deal_id ? phoneByDealId.get(row.deal_id) ?? undefined : undefined,
+            }),
+          });
+        } catch (cleanupErr) {
+          console.warn("[VICIdial] Bulk unassign cleanup warning:", cleanupErr);
+        }
+      }
+
       const ids = assignedRows.map((r) => r.id);
       for (const batch of chunk(ids, 200)) {
         const { error } = await supabase.from("retention_assigned_leads").delete().in("id", batch);

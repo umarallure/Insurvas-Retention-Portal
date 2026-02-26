@@ -13,7 +13,6 @@ export function CloudTalkPopover({ open }: { open: boolean }) {
   const { currentLeadPhone } = useDashboard();
   const previousPhoneRef = useRef<string | null>(null);
 
-  // Note: CloudTalk doesn't auto-populate like Aircall, but we can show the number
   useEffect(() => {
     if (open && currentLeadPhone && currentLeadPhone !== "-") {
       previousPhoneRef.current = currentLeadPhone;
@@ -24,7 +23,7 @@ export function CloudTalkPopover({ open }: { open: boolean }) {
     <div className="w-[380px] overflow-hidden rounded-md border bg-background shadow-2xl">
       <div className="flex items-start justify-between gap-3 border-b bg-background px-4 pb-3 pt-3">
         <div className="flex flex-1 items-center justify-between">
-          <div className="text-sm font-semibold">CloudTalk Dialer</div>
+          <div className="text-sm font-semibold">VICIdial Dialer</div>
           <Badge variant="outline" className="text-[10px]">
             {ready ? (loggedIn ? "Ready" : "Not ready") : "Loading..."}
           </Badge>
@@ -64,14 +63,12 @@ export function CloudTalkPopover({ open }: { open: boolean }) {
 
       <div className="bg-muted/10 p-4">
         <div className="space-y-2 text-xs text-muted-foreground">
-          <p>Click "Call lead" to initiate a call through CloudTalk.</p>
+          <p>Click &quot;Call lead&quot; to initiate a call through VICIdial.</p>
           <p className="text-[10px]">
-            The agent must be online in CloudTalk for calls to connect.
+            The agent must be available in VICIdial for calls to connect.
           </p>
         </div>
       </div>
     </div>
   );
 }
-
-

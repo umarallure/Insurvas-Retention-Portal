@@ -1,0 +1,30 @@
+{
+  "generatedAt": "2026-02-26T06:23:12.814Z",
+  "note": "Review campaignId/listId/vicidialUser before running bootstrap_vicidial_agent_mapping.ts",
+  "agents": [
+    {
+      "profileId": "787e4473-66a4-4c95-9128-d595859a19a9",
+      "campaignId": "ret787e4",
+      "campaignName": "Retention Aqib Afridi",
+      "listId": "1000",
+      "vicidialUser": "aqib_afridi",
+      "listName": "Retention Aqib Afridi"
+    },
+    {
+      "profileId": "b9fcae3a-3653-4ab9-ab86-49dd8c9399ad",
+      "campaignId": "retb9fca",
+      "campaignName": "Retention Qasim Raja",
+      "listId": "1001",
+      "vicidialUser": "qasim_raja",
+      "listName": "Retention Qasim Raja"
+    },
+    {
+      "profileId": "1cda9534-ffb8-466b-bfaa-85b372cf7c01",
+      "campaignId": "ret1cda9",
+      "campaignName": "Retention Hussain Khan",
+      "listId": "1002",
+      "vicidialUser": "hussain_khan",
+      "listName": "Retention Hussain Khan"
+    }
+  ]
+}

@@ -560,6 +560,22 @@ export default function ManagerAssignLeadPage() {
     if (!activeUnassign?.assignmentId) return;
     setUnassigning(true);
     try {
+      // Best-effort VICIdial cleanup so unassigned leads are removed there too.
+      try {
+        await fetch("/api/vicidial/unassign-lead", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            assignment_id: activeUnassign.assignmentId,
+            agent_profile_id: currentAssignmentForLead(activeUnassign.row.lead_id)?.assignee_profile_id ?? undefined,
+            deal_id: activeUnassign.row.deal_id ?? undefined,
+            phone_number: activeUnassign.row.phone_number ?? undefined,
+          }),
+        });
+      } catch (vicidialCleanupError) {
+        console.warn("[VICIdial] Unassign cleanup failed (non-blocking):", vicidialCleanupError);
+      }
+
       const { error } = await supabase
         .from("retention_assigned_leads")
         .delete()
@@ -585,7 +601,7 @@ export default function ManagerAssignLeadPage() {
     } finally {
       setUnassigning(false);
     }
-  }, [activeUnassign, loadLeadsAndAssignments, toast]);
+  }, [activeUnassign, currentAssignmentForLead, loadLeadsAndAssignments, toast]);
 
   const ensureLeadForRow = useCallback(
     async (row: AssignLeadRow): Promise<string | null> => {
@@ -880,29 +896,35 @@ export default function ManagerAssignLeadPage() {
         setAssignments([]);
       }
 
-      // Add contact to CloudTalk campaign (non-blocking)
+      // Sync contact to VICIdial (non-blocking)
       if (activeLead.phone_number && selectedAgentId) {
         try {
-          const response = await fetch("/api/cloudtalk/contact/add", {
+          const activeAssignment = activeLead.deal_id
+            ? activeAssignments.find((a) => a.deal_id === activeLead.deal_id && a.assignee_profile_id === selectedAgentId)
+            : null;
+          const response = await fetch("/api/vicidial/add-lead", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
+              assignment_id: activeAssignment?.id ?? undefined,
               phone_number: activeLead.phone_number,
               full_name: activeLead.display_name,
               agent_profile_id: selectedAgentId,
-              deal_id: activeLead.deal_id, // Include deal_id for external URL in CloudTalk
+              deal_id: activeLead.deal_id,
+              vendor_lead_code: activeLead.deal_id ?? undefined,
+              comments: "Assigned from Retention Portal",
             }),
           });
 
           const result = await response.json();
-          if (!result.success) {
-            console.warn("[CloudTalk] Failed to add contact:", result.error);
-            // Don't show error to user - assignment succeeded, CloudTalk is optional
+          if (!response.ok || result.ok === false) {
+            console.warn("[VICIdial] Failed to sync lead:", result.error ?? result.raw);
+            // Don't show error to user - assignment succeeded, dialer sync is optional
           }
-        } catch (cloudtalkError) {
-          console.error("[CloudTalk] Error adding contact:", cloudtalkError);
+        } catch (vicidialError) {
+          console.error("[VICIdial] Error syncing lead:", vicidialError);
           // Silently fail - assignment succeeded
         }
       }
