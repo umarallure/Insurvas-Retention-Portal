@@ -36,6 +36,16 @@ function hasFlag(name: string) {
   return process.argv.includes(name);
 }
 
+function normalizeCampaignId(raw: string, profileId: string) {
+  const cleaned = (raw ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+  if (cleaned.length >= 2 && cleaned.length <= 8) return cleaned;
+  const base = cleaned.slice(0, 3) || "ret";
+  const suffix = profileId.replace(/-/g, "").toLowerCase().slice(0, 5);
+  return `${base}${suffix}`.slice(0, 8);
+}
+
 function assertEnv(name: string) {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required for this operation`);
@@ -96,11 +106,9 @@ function validateInput(input: BootstrapInput) {
     if (a.listId === undefined || a.listId === null || `${a.listId}`.trim() === "") {
       throw new Error(`Agent ${a.profileId} missing listId`);
     }
-    const campaignId = a.campaignId.trim();
-    if (!/^[A-Za-z0-9]{2,8}$/.test(campaignId)) {
-      throw new Error(
-        `Agent ${a.profileId} has invalid campaignId "${a.campaignId}". VICIdial requires 2-8 alphanumeric chars.`,
-      );
+    const normalized = normalizeCampaignId(a.campaignId.trim(), a.profileId);
+    if (!/^[A-Za-z0-9]{2,8}$/.test(normalized)) {
+      throw new Error(`Agent ${a.profileId} campaignId normalization failed for "${a.campaignId}"`);
     }
   }
 }
@@ -118,12 +126,16 @@ async function main() {
 
   const mapping: MappingOutput = {};
   for (const agent of input.agents) {
+    const campaignId = normalizeCampaignId(String(agent.campaignId), agent.profileId);
     mapping[agent.profileId] = {
-      campaignId: agent.campaignId,
+      campaignId,
       listId: agent.listId,
       vicidialUser: agent.vicidialUser,
       webformBaseUrl: agent.webformBaseUrl,
     };
+    if (campaignId !== agent.campaignId) {
+      agent.campaignId = campaignId;
+    }
   }
 
   await writeFile(outputPath, `${JSON.stringify(mapping, null, 2)}\n`, "utf8");

@@ -105,7 +105,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       last_name: names.lastName,
       campaign_id: campaignId,
       list_id: listId,
-      vendor_lead_code: body.vendor_lead_code,
+      vendor_lead_code: body.vendor_lead_code ?? body.deal_id ?? undefined,
       source_id: body.source_id ?? body.agent_profile_id ?? mappedUser ?? null,
       comments: comments || undefined,
       ...(body.extra_params ?? {}),

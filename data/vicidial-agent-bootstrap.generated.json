@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-02-25T17:40:31.660Z",
+  "generatedAt": "2026-02-26T06:23:12.814Z",
   "note": "Review campaignId/listId/vicidialUser before running bootstrap_vicidial_agent_mapping.ts",
   "agents": [
     {

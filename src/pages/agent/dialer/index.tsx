@@ -34,8 +34,37 @@ type QueueLeadRow = {
   } | null;
 };
 
+type VicidialLeadRow = {
+  lead_id?: string;
+  phone_number?: string;
+  alt_phone?: string;
+  title?: string;
+  first_name?: string;
+  last_name?: string;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+  email?: string;
+  status?: string;
+  list_id?: string;
+  vendor_lead_code?: string;
+  source_id?: string;
+  called_count?: string;
+  entry_date?: string;
+  modify_date?: string;
+  last_local_call_time?: string;
+  comments?: string;
+  raw: string;
+};
+
 export default function AgentDialerDashboard() {
   const [queueLeads, setQueueLeads] = useState<QueueLeadRow[]>([]);
+  const [profileId, setProfileId] = useState<string | null>(null);
+  const [rightView, setRightView] = useState<"dialer" | "vicidial-leads">("dialer");
+  const [vicidialLeads, setVicidialLeads] = useState<VicidialLeadRow[]>([]);
+  const [vicidialLeadsLoading, setVicidialLeadsLoading] = useState(false);
+  const [vicidialLeadsError, setVicidialLeadsError] = useState<string | null>(null);
+  const [vicidialRaw, setVicidialRaw] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [sessionActive, setSessionActive] = useState(false);
@@ -68,6 +97,7 @@ export default function AgentDialerDashboard() {
         setQueueLeads([]);
         return;
       }
+      setProfileId(profile.id);
 
       // Get active assigned leads
       const { data: assignments } = await supabase
@@ -253,6 +283,44 @@ export default function AgentDialerDashboard() {
   const openLeadDetails = (dealId: number) => {
     // Open in new tab - call stays active in this tab
     window.open(`/agent/assigned-lead-details?dealId=${dealId}`, "_blank");
+  };
+
+  const loadVicidialLeads = useCallback(async () => {
+    if (!profileId) {
+      setVicidialLeadsError("Missing agent profile");
+      return;
+    }
+    setVicidialLeadsLoading(true);
+    setVicidialLeadsError(null);
+    setVicidialRaw("");
+    try {
+      const response = await fetch("/api/vicidial/leads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profile_id: profileId, limit: 100 }),
+      });
+      const result = (await response.json()) as {
+        ok?: boolean;
+        leads?: VicidialLeadRow[];
+        raw?: string;
+        details?: string;
+      };
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.details || "Failed to load VICIdial leads");
+      }
+      setVicidialLeads(result.leads ?? []);
+      setVicidialRaw(result.raw ?? "");
+    } catch (error) {
+      setVicidialLeadsError(error instanceof Error ? error.message : "Failed to load VICIdial leads");
+      setVicidialLeads([]);
+    } finally {
+      setVicidialLeadsLoading(false);
+    }
+  }, [profileId]);
+
+  const openLeadsView = () => {
+    setRightView("vicidial-leads");
+    void loadVicidialLeads();
   };
 
   return (
@@ -448,22 +516,81 @@ export default function AgentDialerDashboard() {
               <PhoneIcon className="h-5 w-5" />
               VICIdial
             </CardTitle>
-            <Badge variant={sessionActive ? "default" : "secondary"}>
-              {sessionActive ? "Active" : "Inactive"}
-            </Badge>
+            <div className="flex items-center gap-2">
+              {rightView === "dialer" ? (
+                <Button variant="outline" size="sm" onClick={openLeadsView}>
+                  View Leads
+                </Button>
+              ) : (
+                <Button variant="outline" size="sm" onClick={() => setRightView("dialer")}>
+                  Back To Dialer
+                </Button>
+              )}
+              <Badge variant={sessionActive ? "default" : "secondary"}>
+                {sessionActive ? "Active" : "Inactive"}
+              </Badge>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="flex-1 p-0 relative">
-          {vicidialUrl ? (
-            <iframe
-              src={vicidialUrl}
-              allow="microphone *"
-              className="absolute inset-0 w-full h-full border-0"
-              title="VICIdial Agent"
-            />
+          {rightView === "dialer" ? (
+            vicidialUrl ? (
+              <iframe
+                src={vicidialUrl}
+                allow="microphone *"
+                className="absolute inset-0 w-full h-full border-0"
+                title="VICIdial Agent"
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
+                Missing <code className="mx-1">NEXT_PUBLIC_VICIDIAL_AGENT_URL</code> env var.
+              </div>
+            )
           ) : (
-            <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
-              Missing <code className="mx-1">NEXT_PUBLIC_VICIDIAL_AGENT_URL</code> env var.
+            <div className="h-full overflow-auto p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium">VICIdial Leads</div>
+                <Button variant="ghost" size="sm" onClick={() => void loadVicidialLeads()} disabled={vicidialLeadsLoading}>
+                  <RefreshCwIcon className={`h-4 w-4 mr-1 ${vicidialLeadsLoading ? "animate-spin" : ""}`} />
+                  Refresh
+                </Button>
+              </div>
+              {vicidialLeadsError ? <div className="text-sm text-destructive">{vicidialLeadsError}</div> : null}
+              {vicidialLeadsLoading ? (
+                <div className="text-sm text-muted-foreground">Loading leads...</div>
+              ) : vicidialLeads.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No leads returned from VICIdial API.</div>
+              ) : (
+                <div className="space-y-2">
+                  {vicidialLeads.map((lead, idx) => (
+                    <div key={`${lead.lead_id ?? "row"}-${idx}`} className="rounded border p-2 text-xs">
+                      <div className="font-medium">
+                        Lead #{lead.lead_id ?? "-"} {lead.phone_number ? `• ${lead.phone_number}` : ""}{" "}
+                        {(lead.first_name || lead.last_name) ? `• ${lead.first_name ?? ""} ${lead.last_name ?? ""}`.trim() : ""}
+                      </div>
+                      <div className="text-muted-foreground">
+                        Status: {lead.status ?? "-"} • List: {lead.list_id ?? "-"}
+                      </div>
+                      <div className="text-muted-foreground">
+                        Vendor Code: {lead.vendor_lead_code ?? "-"} • Source: {lead.source_id ?? "-"} • Called: {lead.called_count ?? "0"}
+                      </div>
+                      <div className="text-muted-foreground">
+                        {lead.city ?? "-"}, {lead.state ?? "-"} {lead.postal_code ?? ""} • {lead.email ?? "no-email"}
+                      </div>
+                      <div className="text-muted-foreground">
+                        Entry: {lead.entry_date ?? "-"} • Last Call: {lead.last_local_call_time ?? "-"}
+                      </div>
+                      {lead.comments ? <div className="mt-1 whitespace-pre-wrap">{lead.comments}</div> : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {vicidialRaw ? (
+                <details className="text-xs">
+                  <summary className="cursor-pointer text-muted-foreground">Raw VICIdial response</summary>
+                  <pre className="mt-2 max-h-60 overflow-auto rounded border p-2">{vicidialRaw}</pre>
+                </details>
+              ) : null}
             </div>
           )}
         </CardContent>
