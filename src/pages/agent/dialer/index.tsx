@@ -67,6 +67,7 @@ export default function AgentDialerDashboard() {
   const [sessionActive, setSessionActive] = useState(false);
   const [sessionUpdating, setSessionUpdating] = useState(false);
   const [callingLeadId, setCallingLeadId] = useState<string | null>(null);
+  const [iframeMediaEnabled, setIframeMediaEnabled] = useState(false);
 
   const vicidialUrl = process.env.NEXT_PUBLIC_VICIDIAL_AGENT_URL || process.env.NEXT_PUBLIC_VICIDIAL_URL || "";
   const vicidialAgentUser = process.env.NEXT_PUBLIC_VICIDIAL_AGENT_USER || "";
@@ -471,12 +472,25 @@ export default function AgentDialerDashboard() {
         <CardContent className="flex-1 min-h-0 p-0 relative">
           {rightView === "dialer" ? (
             vicidialUrl ? (
-              <iframe
-                src={vicidialUrl}
-                allow="microphone *"
-                className="absolute inset-0 w-full h-full border-0"
-                title="VICIdial Agent"
-              />
+              iframeMediaEnabled ? (
+                <iframe
+                  src={vicidialUrl}
+                  allow="microphone; autoplay; speaker-selection; camera"
+                  className="absolute inset-0 w-full h-full border-0"
+                  title="VICIdial Agent"
+                />
+              ) : (
+                <div className="flex h-full items-center justify-center p-6">
+                  <div className="max-w-md text-center space-y-3">
+                    <div className="text-sm text-muted-foreground">
+                      Click once to enable voice permissions for the embedded VICIdial webphone.
+                    </div>
+                    <Button onClick={() => setIframeMediaEnabled(true)}>
+                      Enable Voice In Iframe
+                    </Button>
+                  </div>
+                </div>
+              )
             ) : (
               <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
                 Missing <code className="mx-1">NEXT_PUBLIC_VICIDIAL_AGENT_URL</code> env var.

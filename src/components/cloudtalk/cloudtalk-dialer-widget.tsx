@@ -109,7 +109,7 @@ export function CloudTalkDialerWidget() {
         <div className="flex-1 bg-background overflow-hidden relative">
           <iframe
             src={iframeSrc}
-            allow="microphone *"
+            allow="microphone *; autoplay *; speaker-selection *; camera *"
             className="absolute inset-0 w-full h-full border-0"
             title="CloudTalk Dialer"
           />
