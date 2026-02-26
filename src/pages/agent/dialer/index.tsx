@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState, useMemo } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,8 +12,6 @@ import {
   ExternalLinkIcon,
   RefreshCwIcon,
   UsersIcon,
-  PlayCircleIcon,
-  ClockIcon,
   Loader2Icon,
 } from "lucide-react";
 import { getDealLabelStyle, getDealTagLabelFromGhlStage } from "@/lib/monday-deal-category-tags";
@@ -66,12 +64,8 @@ export default function AgentDialerDashboard() {
   const [vicidialRaw, setVicidialRaw] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [sessionActive, setSessionActive] = useState(false);
-  const [sessionStartTime, setSessionStartTime] = useState<Date | null>(null);
-  const [sessionUpdating, setSessionUpdating] = useState(false);
+  const [sessionActive] = useState(false);
   const [callingLeadId, setCallingLeadId] = useState<string | null>(null);
-  const [dialerMessage, setDialerMessage] = useState<string | null>(null);
-  const [dialerError, setDialerError] = useState<string | null>(null);
 
   const vicidialUrl = process.env.NEXT_PUBLIC_VICIDIAL_AGENT_URL || process.env.NEXT_PUBLIC_VICIDIAL_URL || "";
   const vicidialAgentUser = process.env.NEXT_PUBLIC_VICIDIAL_AGENT_USER || "";
@@ -151,91 +145,17 @@ export default function AgentDialerDashboard() {
     void loadQueue();
   };
 
-  const handleStartSession = async () => {
-    if (!vicidialAgentUser) {
-      setDialerError("Missing NEXT_PUBLIC_VICIDIAL_AGENT_USER");
-      return;
-    }
-    setSessionUpdating(true);
-    setDialerError(null);
-    setDialerMessage(null);
-    try {
-      const response = await fetch("/api/vicidial/agent-status", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          agent_user: vicidialAgentUser,
-          status: "READY",
-          campaign_id: vicidialCampaignId,
-        }),
-      });
-      const result = (await response.json()) as { ok?: boolean; raw?: string };
-      if (!response.ok || result.ok === false) {
-        throw new Error(result.raw || "Failed to set agent READY");
-      }
-      setSessionActive(true);
-      setSessionStartTime(new Date());
-      setDialerMessage("Agent status set to READY");
-    } catch (error) {
-      setDialerError(error instanceof Error ? error.message : "Failed to start session");
-    } finally {
-      setSessionUpdating(false);
-    }
-  };
-
-  const handleEndSession = async () => {
-    if (!vicidialAgentUser) {
-      setDialerError("Missing NEXT_PUBLIC_VICIDIAL_AGENT_USER");
-      return;
-    }
-    setSessionUpdating(true);
-    setDialerError(null);
-    setDialerMessage(null);
-    try {
-      await fetch("/api/vicidial/hangup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          agent_user: vicidialAgentUser,
-          campaign_id: vicidialCampaignId,
-        }),
-      });
-      const response = await fetch("/api/vicidial/agent-status", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          agent_user: vicidialAgentUser,
-          status: "PAUSE",
-          campaign_id: vicidialCampaignId,
-        }),
-      });
-      const result = (await response.json()) as { ok?: boolean; raw?: string };
-      if (!response.ok || result.ok === false) {
-        throw new Error(result.raw || "Failed to pause agent");
-      }
-      setSessionActive(false);
-      setSessionStartTime(null);
-      setDialerMessage("Agent paused");
-    } catch (error) {
-      setDialerError(error instanceof Error ? error.message : "Failed to end session");
-    } finally {
-      setSessionUpdating(false);
-    }
-  };
-
   const handleDialLead = async (lead: QueueLeadRow) => {
     if (!vicidialAgentUser) {
-      setDialerError("Missing NEXT_PUBLIC_VICIDIAL_AGENT_USER");
+      console.error("[dialer] Missing NEXT_PUBLIC_VICIDIAL_AGENT_USER");
       return;
     }
     const phone = lead.deal?.phone_number?.trim();
     if (!phone) {
-      setDialerError("Selected lead has no phone number");
+      console.error("[dialer] Selected lead has no phone number");
       return;
     }
     setCallingLeadId(lead.id);
-    setDialerError(null);
-    setDialerMessage(null);
     try {
       const response = await fetch("/api/vicidial/dial", {
         method: "POST",
@@ -250,34 +170,12 @@ export default function AgentDialerDashboard() {
       if (!response.ok || result.ok === false) {
         throw new Error(result.raw || "Failed to dial");
       }
-      setDialerMessage(`Dial request sent for ${phone}`);
     } catch (error) {
-      setDialerError(error instanceof Error ? error.message : "Failed to dial");
+      console.error("[dialer] Failed to dial", error);
     } finally {
       setCallingLeadId(null);
     }
   };
-
-  // Session duration display
-  const sessionDuration = useMemo(() => {
-    if (!sessionStartTime) return "00:00:00";
-    const now = new Date();
-    const diff = Math.floor((now.getTime() - sessionStartTime.getTime()) / 1000);
-    const hours = Math.floor(diff / 3600);
-    const minutes = Math.floor((diff % 3600) / 60);
-    const seconds = diff % 60;
-    return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
-  }, [sessionStartTime]);
-
-  // Update timer every second when session is active
-  useEffect(() => {
-    if (!sessionActive) return;
-    const interval = setInterval(() => {
-      // Force re-render to update duration
-      setSessionStartTime(prev => prev ? new Date(prev.getTime()) : null);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [sessionActive]);
 
   const openLeadDetails = (dealId: number) => {
     // Open in new tab - call stays active in this tab
@@ -326,60 +224,6 @@ export default function AgentDialerDashboard() {
     <div className="flex h-[calc(100vh-4rem)] gap-4 p-4">
       {/* Left Panel - Queue & Controls */}
       <div className="w-80 flex-shrink-0 flex flex-col gap-4">
-        {/* Session Controls */}
-        <Card className="border-primary/20">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <PhoneIcon className="h-4 w-4" />
-              Dialer Session
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {dialerError ? <div className="text-xs text-destructive">{dialerError}</div> : null}
-            {dialerMessage ? <div className="text-xs text-green-600">{dialerMessage}</div> : null}
-            {!sessionActive ? (
-              <Button 
-                className="w-full gap-2" 
-                size="lg"
-                onClick={handleStartSession}
-                disabled={sessionUpdating}
-              >
-                <PlayCircleIcon className="h-5 w-5" />
-                {sessionUpdating ? "Starting..." : "Start Dialing Session"}
-              </Button>
-            ) : (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <ClockIcon className="h-4 w-4" />
-                    Session Time
-                  </div>
-                  <Badge variant="outline" className="font-mono">
-                    {sessionDuration}
-                  </Badge>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                    </span>
-                    Session Active
-                  </div>
-                </div>
-                <Button 
-                  variant="outline" 
-                  className="w-full" 
-                  onClick={handleEndSession}
-                  disabled={sessionUpdating}
-                >
-                  {sessionUpdating ? "Ending..." : "End Session"}
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
         {/* Queue Overview */}
         <Card className="flex-1 flex flex-col min-h-0">
           <CardHeader className="pb-3 flex-shrink-0">
