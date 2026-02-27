@@ -48,8 +48,18 @@ async function readIndex(): Promise<VicidialLeadIndexFile> {
 }
 
 async function writeIndex(data: VicidialLeadIndexFile) {
-  await fs.mkdir(path.dirname(INDEX_PATH), { recursive: true });
-  await fs.writeFile(INDEX_PATH, JSON.stringify(data, null, 2), "utf8");
+  try {
+    await fs.mkdir(path.dirname(INDEX_PATH), { recursive: true });
+    await fs.writeFile(INDEX_PATH, JSON.stringify(data, null, 2), "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    // Vercel/Serverless file systems are read-only at runtime. The local index is best-effort only.
+    if (code === "EROFS" || code === "EPERM" || code === "EACCES") {
+      console.warn("[vicidial-lead-index] Skipping local index write in read-only runtime:", code);
+      return;
+    }
+    throw error;
+  }
 }
 
 export async function upsertVicidialLeadIndex(entry: Omit<VicidialLeadIndexEntry, "updatedAt">) {
@@ -126,4 +136,3 @@ export async function removeVicidialLeadIndex(input: {
   });
   await writeIndex({ entries: next });
 }
-
