@@ -188,6 +188,7 @@ export default function AgentDialerDashboard() {
         throw new Error(result.raw || "Failed to set agent READY");
       }
       setSessionActive(true);
+      setVicidialMode("wrapper");
     } catch (error) {
       console.error("[dialer] Failed to start session", error);
     } finally {
