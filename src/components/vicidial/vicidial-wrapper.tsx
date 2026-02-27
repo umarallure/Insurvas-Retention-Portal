@@ -173,44 +173,46 @@ export const VicidialWrapper = React.forwardRef<VicidialWrapperHandle, VicidialW
     }
 
     async function handleSaveDisposition() {
-     const status = disposition.trim().toUpperCase();
-     if (!status || !agentUser) return;
+      const status = disposition.trim().toUpperCase();
+      if (!status || !agentUser) return;
 
-     setSavingDisposition(true);
-     setError(null);
-     setMessage(null);
-     try {
-       const res = await fetch("/api/vicidial/agent-status", {
-         method: "POST",
-         headers: { "Content-Type": "application/json" },
-         body: JSON.stringify({
-           agent_user: agentUser,
-           status,
-           campaign_id: campaignId,
-         }),
-       });
-       const data = (await res.json()) as { ok?: boolean; raw?: string; error?: string; message?: string };
-       if (!res.ok || data.ok === false) {
-         throw new Error(data.raw || data.error || data.message || "Failed to set disposition");
-       }
-       setMessage(`Disposition ${status} sent to VICIdial.`);
-       setDisposition("");
-      toast({
-        variant: "success",
-        title: "Status updated",
-        description: `Disposition ${status} sent to VICIdial.`,
-      });
-     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to set disposition";
-      setError(msg);
-      toast({
-        variant: "destructive",
-        title: "Status update failed",
-        description: msg,
-      });
-     } finally {
-       setSavingDisposition(false);
-     }
+      setSavingDisposition(true);
+      setError(null);
+      setMessage(null);
+      try {
+        const res = await fetch("/api/vicidial/agent-status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            agent_user: agentUser,
+            status,
+            campaign_id: campaignId,
+          }),
+        });
+        const data = (await res.json()) as { ok?: boolean; raw?: string; error?: string; message?: string };
+        if (!res.ok || data.ok === false) {
+          throw new Error(data.raw || data.error || data.message || "Failed to set disposition");
+        }
+        setMessage(`Disposition ${status} sent to VICIdial.`);
+        setDisposition("");
+        toast({
+          variant: "success",
+          title: "Status updated",
+          description: `Disposition ${status} sent to VICIdial.`,
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Failed to set disposition";
+        setError(msg);
+        toast({
+          variant: "destructive",
+          title: "Status update failed",
+          description: msg,
+        });
+      } finally {
+        setSavingDisposition(false);
+      }
+    }
+
     const disabledReason =
       !agentUser
         ? "Missing NEXT_PUBLIC_VICIDIAL_AGENT_USER env var."
@@ -359,7 +361,7 @@ export const VicidialWrapper = React.forwardRef<VicidialWrapperHandle, VicidialW
         </CardContent>
       </Card>
     );
-  },
+  }
 );
 
 VicidialWrapper.displayName = "VicidialWrapper";

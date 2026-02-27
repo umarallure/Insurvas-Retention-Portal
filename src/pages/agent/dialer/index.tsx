@@ -564,6 +564,7 @@ export default function AgentDialerDashboard() {
                 <div className="relative h-full flex flex-col">
                   <div className="flex-1 min-h-0">
                     <VicidialWrapper
+                      ref={vicidialWrapperRef}
                       agentUser={vicidialAgentUser}
                       campaignId={vicidialCampaignId}
                       sessionActive={sessionActive}
