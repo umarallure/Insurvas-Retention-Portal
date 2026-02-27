@@ -1,6 +1,16 @@
 {
   "entries": [
     {
+      "assignmentId": "9c6075d9-8cb8-444a-827b-cd45f64ee5c5",
+      "dealId": "12578",
+      "phoneNumber": "3026663452",
+      "listId": "1002",
+      "agentProfileId": "1cda9534-ffb8-466b-bfaa-85b372cf7c01",
+      "vendorLeadCode": "12578",
+      "vicidialLeadId": 126,
+      "updatedAt": "2026-02-27T18:31:28.717Z"
+    },
+    {
       "assignmentId": "02c5486d-12cd-428a-b3dd-1c8b7a2c5a71",
       "dealId": "2735",
       "phoneNumber": "4018854475",
@@ -39,16 +49,6 @@
       "vendorLeadCode": "1739",
       "vicidialLeadId": 115,
       "updatedAt": "2026-02-27T16:38:27.140Z"
-    },
-    {
-      "assignmentId": "99360d76-8265-4c02-b9c8-028dafd7f8b4",
-      "dealId": "12578",
-      "phoneNumber": "3026663452",
-      "listId": "1002",
-      "agentProfileId": "1cda9534-ffb8-466b-bfaa-85b372cf7c01",
-      "vendorLeadCode": "12578",
-      "vicidialLeadId": 113,
-      "updatedAt": "2026-02-27T16:35:07.322Z"
     },
     {
       "assignmentId": "0e5a3e6d-b485-4991-b13c-539c2725cf50",
