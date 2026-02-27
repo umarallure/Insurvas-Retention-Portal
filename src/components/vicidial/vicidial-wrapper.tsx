@@ -301,7 +301,7 @@ export const VicidialWrapper = React.forwardRef<VicidialWrapperHandle, VicidialW
                  type="button"
                  variant="destructive"
                  onClick={() => void handleHangup()}
-                 disabled={!!disabledReason || !hasActiveCall}
+                disabled={!agentUser || !hasActiveCall}
                >
                  <PhoneOffIcon className="h-4 w-4 mr-1" />
                  {callState === "ending" ? "Ending..." : "Hang Up"}
