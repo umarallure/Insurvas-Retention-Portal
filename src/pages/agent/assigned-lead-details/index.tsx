@@ -16,11 +16,10 @@ import { LeaveConfirmDialog } from "@/components/agent/assigned-lead-details/lea
 import { LeadHeader } from "@/components/agent/assigned-lead-details/lead-header";
 import { PolicyCard } from "@/components/agent/assigned-lead-details/policy-card";
 import { DailyDealFlowTab } from "@/components/agent/assigned-lead-details/daily-deal-flow-tab";
+import { ContactNotesPanel } from "@/components/agent/assigned-lead-details/contact-notes-panel";
 import { VerificationPanel } from "@/components/agent/assigned-lead-details/verification-panel";
 import { useNavigationPrevention } from "@/components/agent/assigned-lead-details/use-navigation-prevention";
 import { useRetentionAgent } from "@/components/agent/assigned-lead-details/use-retention-agent";
-import { DataValidationPanel } from "@/components/data-quality/data-validation-panel";
-import { ActivityTimeline } from "@/components/data-quality/activity-timeline";
 import { useAccess } from "@/components/access-context";
 
 export default function AssignedLeadDetailsPage() {
@@ -225,7 +224,7 @@ export default function AssignedLeadDetailsPage() {
                     <TabsList className="grid w-full grid-cols-3">
                       <TabsTrigger value="policies">Policies</TabsTrigger>
                       <TabsTrigger value="daily">Deal Notes</TabsTrigger>
-                      <TabsTrigger value="data-quality">Data Quality</TabsTrigger>
+                      <TabsTrigger value="contact-notes">Contact Notes</TabsTrigger>
                     </TabsList>
 
                     <TabsContent value="policies" className="pt-2">
@@ -285,20 +284,14 @@ export default function AssignedLeadDetailsPage() {
                       </div>
                     </TabsContent>
 
-                    <TabsContent value="data-quality" className="pt-2">
+                    <TabsContent value="contact-notes" className="pt-2">
                       <div className="space-y-4">
                         {(selectedDeal?.monday_item_id || lead?.submission_id) ? (
-                          <>
-                            <DataValidationPanel
-                              submissionId={String(selectedDeal?.monday_item_id ?? lead?.submission_id ?? "")}
-                              dealId={selectedPolicyView ? (selectedPolicyView.raw as { id?: number })?.id ?? undefined : undefined}
-                            />
-                            <ActivityTimeline
-                              submissionId={String(selectedDeal?.monday_item_id ?? lead?.submission_id ?? "")}
-                            />
-                          </>
+                          <ContactNotesPanel
+                            submissionId={String(selectedDeal?.monday_item_id ?? lead?.submission_id ?? "")}
+                          />
                         ) : (
-                          <div className="text-sm text-muted-foreground">No submission ID available for data quality analysis.</div>
+                          <div className="text-sm text-muted-foreground">No submission ID available for contact notes.</div>
                         )}
                       </div>
                     </TabsContent>
