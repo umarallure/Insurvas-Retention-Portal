@@ -199,6 +199,8 @@ export function DailyDealKanbanView(props: DailyDealsKanbanProps) {
                 call_center: d.call_center ?? d.lead_vendor ?? d.call_center ?? null,
                 deal_name: d.deal_name ?? d.submission_id ?? null,
               };
+              // mark as non-clickable for this view
+              (row as any).__clickable = false;
               return row;
             });
 
