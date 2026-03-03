@@ -95,8 +95,8 @@ export default function ManagerAssignLeadPage() {
   const [unassigning, setUnassigning] = useState(false);
   const [activeUnassign, setActiveUnassign] = useState<{ row: AssignLeadRow; assignmentId: string } | null>(null);
 
-  const leadsLoadInFlightRef = useRef(false);
   const leadsLastQueryKeyRef = useRef<string | null>(null);
+  const leadsRequestIdRef = useRef(0);
 
   const pageCount = useMemo(() => {
     if (!totalRows) return 1;
@@ -142,10 +142,9 @@ export default function ManagerAssignLeadPage() {
   const loadLeadsAndAssignments = useCallback(async (opts?: { force?: boolean }) => {
     const queryKey = JSON.stringify({ page, search: search.trim(), groupFilter, carrierFilter: carrierFilter.sort().join(","), agentFilter: agentFilter.sort().join(",") });
     if (!opts?.force && leadsLastQueryKeyRef.current === queryKey) return;
-    if (leadsLoadInFlightRef.current) return;
-
-    leadsLoadInFlightRef.current = true;
     leadsLastQueryKeyRef.current = queryKey;
+    const requestId = ++leadsRequestIdRef.current;
+    const isStale = () => requestId !== leadsRequestIdRef.current;
     setLoading(true);
     try {
       const trimmed = search.trim();
@@ -289,6 +288,7 @@ export default function ManagerAssignLeadPage() {
         dealsQuery = dealsQuery.in("id", filteredDealIds);
       } else if (filteredDealIds !== null && filteredDealIds.length === 0) {
         // No deals match the filter, return empty result
+        if (isStale()) return;
         setRows([]);
         setTotalRows(0);
         setAssignments([]);
@@ -322,6 +322,7 @@ export default function ManagerAssignLeadPage() {
 
       const { data: dealsData, error: dealsError, count } = await dealsQuery.range(from, to);
       if (dealsError) throw dealsError;
+      if (isStale()) return;
 
       const deals = (dealsData ?? []) as MondayDealRow[];
       setTotalRows(count ?? null);
@@ -398,6 +399,7 @@ export default function ManagerAssignLeadPage() {
       // Query assignments by deal_id (new schema) using the deals we just fetched
       const dealIds = deals.map((d) => d.id).filter((v): v is number => !!v);
       if (dealIds.length === 0) {
+        if (isStale()) return;
         setAssignments([]);
         return;
       }
@@ -409,6 +411,7 @@ export default function ManagerAssignLeadPage() {
         .eq("status", "active");
 
       if (assignmentError) throw assignmentError;
+      if (isStale()) return;
 
       const activeAssignments = (assignmentData ?? []) as Array<{
         id: string;
@@ -446,10 +449,12 @@ export default function ManagerAssignLeadPage() {
         setAssignments([]);
       }
     } catch (error) {
+      if (isStale()) return;
       console.error("[manager-assign-lead] load error", error);
     } finally {
-      setLoading(false);
-      leadsLoadInFlightRef.current = false;
+      if (!isStale()) {
+        setLoading(false);
+      }
     }
   }, [groupFilter, page, search, carrierFilter, agentFilter]);
 
