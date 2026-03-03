@@ -126,6 +126,7 @@ export function AppHeaderNav() {
               isActive={isActive("/manager")}
               items={[
                 { href: "/manager/retention-daily-deal-flow", label: "Retention Deal Flow" },
+                { href: "/non-retention-leads", label: "Non Retention Leads" },
                 { href: "/manager/assign-lead", label: "Assign Leads" },
                 { href: "/manager/fixed-policies", label: "Fixed Policies" },
                 { href: "/manager/agent-report-card", label: "Agent Report Card" },
