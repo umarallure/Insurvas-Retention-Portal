@@ -600,12 +600,15 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
             const identity = identityById.get(dealId);
             const assignee = finalAssignments.get(dealId);
             if (!identity || !assignee) return null;
-            return { identity, assignee };
+            const assignment = activeAssignments.find(
+              (a) => a.deal_id === dealId && a.assignee_profile_id === assignee,
+            );
+            return { identity, assignee, assignmentId: assignment?.id ?? null };
           })
-          .filter((v): v is { identity: DealIdentityRow; assignee: string } => !!v);
+          .filter((v): v is { identity: DealIdentityRow; assignee: string; assignmentId: string | null } => !!v);
 
         // Add to VICIdial in parallel (don't await - fire and forget)
-        for (const { identity, assignee } of batchIdentities) {
+        for (const { identity, assignee, assignmentId } of batchIdentities) {
           if (identity.phone_number && identity.phone_number.trim()) {
             const fullName = identity.ghl_name || identity.deal_name || "";
             // Fire and forget - don't block assignment
@@ -615,6 +618,7 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
+                assignment_id: assignmentId ?? undefined,
                 phone_number: identity.phone_number,
                 full_name: fullName,
                 agent_profile_id: assignee,
