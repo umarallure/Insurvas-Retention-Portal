@@ -35,6 +35,7 @@ type AssignedLeadRow = {
     phone_number: string | null;
     call_center: string | null;
     carrier: string | null;
+    policy_number: string | null;
     policy_type: string | null;
     last_updated: string | null;
     disposition: string | null;
@@ -58,6 +59,7 @@ type DealRow = {
   phone_number: string | null;
   call_center: string | null;
   carrier: string | null;
+  policy_number: string | null;
   policy_type: string | null;
   last_updated: string | null;
   disposition: string | null;
@@ -102,35 +104,15 @@ export default function AssignedLeadsPage() {
   const [carrierFilter, setCarrierFilter] = useState<string[]>([]);
   const [stageFilter, setStageFilter] = useState<DealCategory[]>([]);
   const [assignedDateFilter, setAssignedDateFilter] = useState<string>("all");
-  const [availableCarriers, setAvailableCarriers] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [assignedLeads, setAssignedLeads] = useState<AssignedLeadRow[]>([]);
   const [handledLeads, setHandledLeads] = useState<AssignedLeadRow[]>([]);
   const [activeTab, setActiveTab] = useState<"assigned" | "handled">("assigned");
   const [page, setPage] = useState(1);
-  const [totalCount, setTotalCount] = useState<number | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   const PAGE_SIZE = 25;
-  const SEARCH_FETCH_LIMIT = 500;
-
   const trimmedSearch = search.trim();
-  const isSearching = trimmedSearch.length > 0;
-
-  const pageCount = useMemo(() => {
-    if (isSearching) return 1;
-    if (!totalCount) return 1;
-    return Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
-  }, [totalCount, isSearching]);
-
-  // Use refs to track current values without causing re-renders
-  const searchRef = React.useRef(search);
-  const pageRef = React.useRef(page);
-  
-  React.useEffect(() => {
-    searchRef.current = search;
-    pageRef.current = page;
-  }, [search, page]);
 
   const loadAssignedLeads = useCallback(async () => {
     setLoading(true);
@@ -141,7 +123,7 @@ export default function AssignedLeadsPage() {
 
       if (!session?.user) {
         setAssignedLeads([]);
-        setTotalCount(null);
+        setHandledLeads([]);
         return;
       }
 
@@ -156,46 +138,32 @@ export default function AssignedLeadsPage() {
       if (profileError || !profile) {
         console.error("[agent-assigned-leads] profile lookup error", profileError);
         setAssignedLeads([]);
-        setTotalCount(null);
+        setHandledLeads([]);
         return;
       }
 
-      // Use ref values to avoid dependency issues
-      const currentSearch = searchRef.current.trim();
-      const currentIsSearching = currentSearch.length > 0;
-      const currentPage = pageRef.current;
-
-      const from = currentIsSearching ? 0 : (currentPage - 1) * PAGE_SIZE;
-      const to = from + (currentIsSearching ? SEARCH_FETCH_LIMIT : PAGE_SIZE) - 1;
-
       let assignmentsQuery = supabase
         .from("retention_assigned_leads")
-        .select("id, deal_id, status, assigned_at", { count: "exact" })
+        .select("id, deal_id, status, assigned_at")
         .eq("assignee_profile_id", profile.id)
         .eq("status", "active")
-        .order("assigned_at", { ascending: false });
+        .order("assigned_at", { ascending: false })
+        .limit(10000);
 
-      if (currentIsSearching) {
-        assignmentsQuery = assignmentsQuery.limit(SEARCH_FETCH_LIMIT);
-      } else {
-        assignmentsQuery = assignmentsQuery.range(from, to);
-      }
-
-      const { data: assignmentRows, error: assignmentError, count } = await assignmentsQuery;
+      const { data: assignmentRows, error: assignmentError } = await assignmentsQuery;
 
       if (assignmentError) {
         console.error("[agent-assigned-leads] assignments error", assignmentError);
         setAssignedLeads([]);
-        setTotalCount(null);
+        setHandledLeads([]);
         return;
       }
 
       const assignments = (assignmentRows ?? []) as AssignedLeadRow[];
-      setTotalCount(typeof count === "number" ? count : null);
 
       if (assignments.length === 0) {
         setAssignedLeads([]);
-        setTotalCount(typeof count === "number" ? count : null);
+        setHandledLeads([]);
         return;
       }
 
@@ -207,10 +175,10 @@ export default function AssignedLeadsPage() {
       if (dealIds.length > 0) {
         const { data: dealRows, error: dealsError } = await supabase
           .from("monday_com_deals")
-          .select("id,monday_item_id,ghl_name,deal_name,ghl_stage,phone_number,call_center,carrier,policy_type,last_updated,disposition")
+          .select("id,monday_item_id,ghl_name,deal_name,ghl_stage,phone_number,call_center,carrier,policy_number,policy_type,last_updated,disposition")
           .eq("is_active", true)
           .in("id", dealIds)
-          .limit(5000);
+          .limit(10000);
 
         if (dealsError) {
           console.error("[agent-assigned-leads] monday deals error", dealsError);
@@ -299,6 +267,7 @@ export default function AssignedLeadsPage() {
                 phone_number: deal.phone_number ?? null,
                 call_center: deal.call_center ?? null,
                 carrier: deal.carrier ?? null,
+                policy_number: deal.policy_number ?? null,
                 policy_type: deal.policy_type ?? null,
                 last_updated: deal.last_updated ?? null,
                 disposition: deal.disposition ?? null,
@@ -326,137 +295,34 @@ export default function AssignedLeadsPage() {
     } catch (error) {
       console.error("[agent-assigned-leads] load error", error);
       setAssignedLeads([]);
-      setTotalCount(null);
+      setHandledLeads([]);
     } finally {
       setLoading(false);
     }
-  }, []); // Empty deps - uses refs for current values
-
-  // Load available carriers from all assigned leads (not just current page)
-  const loadAvailableCarriers = useCallback(async () => {
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session?.user) {
-        setAvailableCarriers([]);
-        return;
-      }
-
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("user_id", session.user.id)
-        .single();
-
-      if (profileError || !profile) {
-        setAvailableCarriers([]);
-        return;
-      }
-
-      // Get all deal IDs assigned to this agent
-      const { data: allAssignments, error: assignmentsError } = await supabase
-        .from("retention_assigned_leads")
-        .select("deal_id")
-        .eq("assignee_profile_id", profile.id)
-        .eq("status", "active")
-        .limit(10000);
-
-      if (assignmentsError || !allAssignments || allAssignments.length === 0) {
-        setAvailableCarriers([]);
-        return;
-      }
-
-      const allDealIds = allAssignments
-        .map((a) => (typeof a.deal_id === "number" ? a.deal_id : null))
-        .filter((v): v is number => v != null);
-
-      if (allDealIds.length === 0) {
-        setAvailableCarriers([]);
-        return;
-      }
-
-      // Fetch carriers from deals
-      const { data: dealRows, error: dealsError } = await supabase
-        .from("monday_com_deals")
-        .select("carrier")
-        .eq("is_active", true)
-        .in("id", allDealIds)
-        .not("carrier", "is", null)
-        .limit(10000);
-
-      if (dealsError) {
-        console.error("[agent-assigned-leads] error loading carriers", dealsError);
-        setAvailableCarriers([]);
-        return;
-      }
-
-      // Also check leads table for carriers
-      const { data: dealRowsForLeads } = await supabase
-        .from("monday_com_deals")
-        .select("monday_item_id")
-        .eq("is_active", true)
-        .in("id", allDealIds)
-        .not("monday_item_id", "is", null)
-        .limit(10000);
-
-      const submissionIds = Array.from(
-        new Set(
-          (dealRowsForLeads ?? [])
-            .map((d) => (typeof d.monday_item_id === "string" ? d.monday_item_id.trim() : ""))
-            .filter((v) => v.length > 0),
-        ),
-      );
-
-      let leadCarriers: string[] = [];
-      if (submissionIds.length > 0) {
-        const { data: leadRows } = await supabase
-          .from("leads")
-          .select("carrier")
-          .in("submission_id", submissionIds)
-          .not("carrier", "is", null)
-          .limit(10000);
-
-        leadCarriers = (leadRows ?? [])
-          .map((r) => (typeof r.carrier === "string" ? r.carrier.trim() : ""))
-          .filter((v) => v.length > 0);
-      }
-
-      const carriers = new Set<string>();
-      
-      // Add carriers from deals
-      for (const row of dealRows ?? []) {
-        const carrier = typeof row.carrier === "string" ? row.carrier.trim() : "";
-        if (carrier) carriers.add(carrier);
-      }
-
-      // Add carriers from leads
-      for (const carrier of leadCarriers) {
-        if (carrier) carriers.add(carrier);
-      }
-
-      setAvailableCarriers(Array.from(carriers).sort());
-    } catch (error) {
-      console.error("[agent-assigned-leads] error loading available carriers", error);
-      setAvailableCarriers([]);
-    }
   }, []);
 
-  // Trigger load when search, page, or tab changes
+  // Trigger a full data refresh from Supabase.
   useEffect(() => {
     void loadAssignedLeads();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, page, activeTab]);
+  }, [loadAssignedLeads]);
 
-  // Load available carriers on mount and when leads change
-  useEffect(() => {
-    void loadAvailableCarriers();
-  }, [loadAvailableCarriers]);
+  const availableCarriers = useMemo(() => {
+    const carriers = new Set<string>();
+    for (const row of [...assignedLeads, ...handledLeads]) {
+      const carrier = (row.lead?.carrier ?? row.deal?.carrier ?? "").trim();
+      if (carrier) carriers.add(carrier);
+    }
+    return Array.from(carriers).sort();
+  }, [assignedLeads, handledLeads]);
+
+  const sourceLeads = useMemo(
+    () => (activeTab === "assigned" ? assignedLeads : handledLeads),
+    [activeTab, assignedLeads, handledLeads],
+  );
 
   const filteredLeads = useMemo(() => {
-    const sourceLeads = activeTab === "assigned" ? assignedLeads : handledLeads;
     const q = trimmedSearch.toLowerCase();
+    const qDigits = q.replace(/\D/g, "");
     return sourceLeads.filter((row) => {
       // Hide leads after 5 PM if they match the criteria
       const shouldHide = shouldHideLeadAfterHours(
@@ -468,16 +334,23 @@ export default function AssignedLeadsPage() {
       }
 
       // Search filter
-      const nameOk =
-        !trimmedSearch ||
-        (row.lead?.customer_full_name ?? row.deal?.ghl_name ?? row.deal?.deal_name ?? "")
-          .toLowerCase()
-          .includes(q) ||
-        (row.lead?.phone_number ?? row.deal?.phone_number ?? "")
-          .replace(/\D/g, "")
-          .includes(q.replace(/\D/g, ""));
+      if (trimmedSearch) {
+        const textHaystacks = [
+          row.lead?.customer_full_name ?? "",
+          row.deal?.ghl_name ?? "",
+          row.deal?.deal_name ?? "",
+          row.deal?.carrier ?? "",
+          row.deal?.policy_number ?? "",
+          row.deal?.monday_item_id ?? "",
+        ].map((value) => value.toLowerCase());
+        const phoneDigits = (row.lead?.phone_number ?? row.deal?.phone_number ?? "").replace(/\D/g, "");
+        const matchesText = textHaystacks.some((value) => value.includes(q));
+        const matchesPhone = qDigits.length > 0 && phoneDigits.includes(qDigits);
 
-      if (!nameOk) return false;
+        if (!matchesText && !matchesPhone) {
+          return false;
+        }
+      }
 
       // Carrier filter
       if (carrierFilter.length > 0) {
@@ -513,12 +386,28 @@ export default function AssignedLeadsPage() {
 
       return true;
     });
-  }, [assignedLeads, trimmedSearch, carrierFilter, stageFilter, assignedDateFilter]);
+  }, [sourceLeads, trimmedSearch, carrierFilter, stageFilter, assignedDateFilter]);
+
+  const pageCount = useMemo(() => {
+    return Math.max(1, Math.ceil(filteredLeads.length / PAGE_SIZE));
+  }, [filteredLeads.length]);
+
+  useEffect(() => {
+    if (page > pageCount) {
+      setPage(pageCount);
+    }
+  }, [page, pageCount]);
+
+  const paginatedLeads = useMemo(() => {
+    const from = (page - 1) * PAGE_SIZE;
+    const to = from + PAGE_SIZE;
+    return filteredLeads.slice(from, to);
+  }, [filteredLeads, page]);
 
   const groupedLeads = useMemo(() => {
     const groups = new Map<string, AssignedLeadRow[]>();
     
-    for (const lead of filteredLeads) {
+    for (const lead of paginatedLeads) {
       const rawName = lead.lead?.customer_full_name ?? lead.deal?.ghl_name ?? lead.deal?.deal_name ?? "";
       const nameSignature = getNameSignature(rawName);
       const phoneDigits = (lead.lead?.phone_number ?? lead.deal?.phone_number ?? "")
@@ -548,7 +437,7 @@ export default function AssignedLeadsPage() {
       leads,
       isDuplicate: leads.length > 1,
     }));
-  }, [filteredLeads]);
+  }, [paginatedLeads]);
 
   const navigationContext = useMemo(() => {
     const dealIds: number[] = [];
@@ -629,7 +518,7 @@ export default function AssignedLeadsPage() {
             <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <Input
-                  placeholder="Search by name or phone..."
+                  placeholder="Search by name, phone, policy #, carrier, or submission ID..."
                   value={search}
                   onChange={(e) => {
                     setSearch(e.target.value);
@@ -946,10 +835,10 @@ export default function AssignedLeadsPage() {
             <div className="flex items-center justify-between pt-2 text-sm text-muted-foreground">
               <div>
                 Page {page} of {pageCount}
-                {typeof totalCount === "number" ? (
+                {filteredLeads.length >= 0 ? (
                   <>
                     <span className="mx-2">•</span>
-                    Total: {totalCount}
+                    Total: {filteredLeads.length}
                   </>
                 ) : null}
               </div>
