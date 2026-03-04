@@ -55,6 +55,8 @@ export function buildDigitWildcardPattern(digits: string) {
      .replace(/\s+/g, " ")
      .trim();
 
+   const withoutLeadingArticle = s.replace(/^the\s+/, "").trim();
+
    // Remove common legal suffixes so "Ambition" can match "Ambition BPO".
    const suffixes = new Set([
      "bpo",
@@ -70,7 +72,7 @@ export function buildDigitWildcardPattern(digits: string) {
      "pc",
    ]);
 
-   const parts = s.split(" ").filter(Boolean);
+   const parts = withoutLeadingArticle.split(" ").filter(Boolean);
    while (parts.length > 1 && suffixes.has(parts[parts.length - 1] ?? "")) {
      parts.pop();
    }
