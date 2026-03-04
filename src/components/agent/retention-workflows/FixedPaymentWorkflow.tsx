@@ -489,6 +489,14 @@ export function FixedPaymentWorkflow({ deal, leadInfo, lead, retentionAgent, onC
             .maybeSingle();
 
           if (profile?.id) {
+            const { data: activeAssignment } = await supabase
+              .from("retention_assigned_leads")
+              .select("id")
+              .eq("deal_id", deal.dealId)
+              .eq("assignee_profile_id", profile.id)
+              .eq("status", "active")
+              .maybeSingle();
+
             // Update the assignment status to 'handled'
             await supabase
               .from("retention_assigned_leads")
@@ -496,6 +504,42 @@ export function FixedPaymentWorkflow({ deal, leadInfo, lead, retentionAgent, onC
               .eq("deal_id", deal.dealId)
               .eq("assignee_profile_id", profile.id)
               .eq("status", "active");
+
+            if (activeAssignment?.id) {
+              try {
+                const vicidialResponse = await fetch("/api/vicidial/unassign-lead", {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    assignment_id: activeAssignment.id,
+                    agent_profile_id: profile.id,
+                    deal_id: deal.dealId,
+                    phone_number: getString(lead, "phone_number") ?? deal.phoneNumber ?? undefined,
+                  }),
+                });
+
+                const vicidialPayload = (await vicidialResponse.json().catch(() => null)) as
+                  | { ok?: boolean; error?: string; details?: string }
+                  | null;
+
+                if (!vicidialResponse.ok || vicidialPayload?.ok === false) {
+                  console.warn("[fixed-payment] VICIdial unassign failed after handled update", {
+                    dealId: deal.dealId,
+                    assignmentId: activeAssignment.id,
+                    responseStatus: vicidialResponse.status,
+                    payload: vicidialPayload,
+                  });
+                }
+              } catch (vicidialError) {
+                console.warn("[fixed-payment] VICIdial unassign request failed after handled update", {
+                  dealId: deal.dealId,
+                  assignmentId: activeAssignment.id,
+                  error: vicidialError,
+                });
+              }
+            }
           }
         }
       }

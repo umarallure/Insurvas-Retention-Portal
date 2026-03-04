@@ -50,6 +50,8 @@ export function buildDigitWildcardPattern(digits: string) {
      .replace(/[\u2018\u2019]/g, "'")
      .replace(/[\u201C\u201D]/g, '"')
      .replace(/[^a-z0-9\s]/g, " ")
+     // Collapse vendor variants like "vBPO", "xBPO", etc. into the same suffix token.
+     .replace(/\b[a-z]*bpo\b/g, "bpo")
      .replace(/\s+/g, " ")
      .trim();
 
@@ -1350,6 +1352,11 @@ export function useAssignedLeadDetails() {
     const getPolicyNumber = (policy: MondayComDeal) =>
       (typeof policy.policy_number === "string" ? policy.policy_number.trim() : "") || "";
 
+    const normalizePersonName = (value: unknown) => {
+      if (typeof value !== "string") return "";
+      return normalizeName(value);
+    };
+
     const getDdfPolicyNumber = (row: Record<string, unknown>) => {
       const ddfPolicy = pickRowValue(row, ["policy_number", "policy_no", "policy", "policyNumber"]);
       return typeof ddfPolicy === "string" ? ddfPolicy.trim() : "";
@@ -1365,41 +1372,6 @@ export function useAssignedLeadDetails() {
       return typeof v === "string" ? normalizeVendorForMatch(v) : "";
     };
 
-    const scoreDdfForPolicy = (policy: MondayComDeal, row: Record<string, unknown>) => {
-      const policyCarrier = typeof policy.carrier === "string" ? policy.carrier.trim().toLowerCase() : "";
-      const policyProduct = typeof policy.policy_type === "string" ? policy.policy_type.trim().toLowerCase() : "";
-      const policyVendorKey = getPolicyVendorKey(policy);
-
-      const ddfCarrier = pickRowValue(row, ["carrier"]);
-      const ddfProduct = pickRowValue(row, ["product_type"]);
-      const ddfCarrierStr = typeof ddfCarrier === "string" ? ddfCarrier.trim().toLowerCase() : "";
-      const ddfProductStr = typeof ddfProduct === "string" ? ddfProduct.trim().toLowerCase() : "";
-
-      const ddfVendorKey = getDdfVendorKey(row);
-
-      let score = 0;
-      if (policyVendorKey && ddfVendorKey && policyVendorKey === ddfVendorKey) score += 80;
-      if (policyCarrier && ddfCarrierStr && policyCarrier === ddfCarrierStr) score += 50;
-      if (policyProduct && ddfProductStr && policyProduct === ddfProductStr) score += 25;
-
-      const tPolicy =
-        Date.parse(String(policy.last_updated ?? policy.updated_at ?? policy.deal_creation_date ?? "")) || 0;
-      const ddfDate = pickRowValue(row, ["date", "created_at", "updated_at"]);
-      const tDdf = typeof ddfDate === "string" ? Date.parse(ddfDate) || 0 : 0;
-      if (tPolicy && tDdf) {
-        const diffDays = Math.abs(tPolicy - tDdf) / (1000 * 60 * 60 * 24);
-        score += Math.max(0, 20 - Math.min(20, diffDays));
-      }
-
-      // Prefer rows that actually have the values we want to show.
-      const hasPremium = pickRowValue(row, ["monthly_premium", "premium"]) != null;
-      const hasCoverage = pickRowValue(row, ["face_amount", "coverage_amount", "coverage"]) != null;
-      const hasDraft = pickRowValue(row, ["draft_date", "initial_draft_date"]) != null;
-      score += (hasPremium ? 5 : 0) + (hasCoverage ? 5 : 0) + (hasDraft ? 5 : 0);
-
-      return score;
-    };
-
     // Build a one-to-one mapping from policy -> best daily_deal_flow row.
     const policyToDdf = new Map<string, Record<string, unknown>>();
     const usedDdfIds = new Set<string>();
@@ -1412,6 +1384,119 @@ export function useAssignedLeadDetails() {
       return `fallback:${String(sub ?? "")}|${String(dt ?? "")}`;
     };
 
+    const getDdfInsuredNameKey = (row: Record<string, unknown>) =>
+      normalizePersonName(pickRowValue(row, ["insured_name", "customer_full_name", "name"]));
+
+    const getPolicyNameKey = (policy: MondayComDeal) =>
+      normalizePersonName(policy.ghl_name ?? policy.deal_name ?? name);
+
+    const getPolicyPhoneKey = (policy: MondayComDeal) => {
+      const digits = normalizePhoneDigits(policy.phone_number ?? "");
+      return digits.length >= 10 ? digits.slice(-10) : digits;
+    };
+
+    const getDdfPhoneKey = (row: Record<string, unknown>) => {
+      const phone = pickRowValue(row, ["client_phone_number", "phone_number", "phone"]);
+      const digits = typeof phone === "string" ? normalizePhoneDigits(phone) : "";
+      return digits.length >= 10 ? digits.slice(-10) : digits;
+    };
+
+    const normalizeCarrierKey = (value: unknown) => {
+      if (typeof value !== "string") return "";
+      const normalized = value.trim().toLowerCase();
+      if (normalized === "amam" || normalized === "anam") return "anam";
+      return normalized;
+    };
+
+    const getCarrierFromNotes = (row: Record<string, unknown>) => {
+      const notes = pickRowValue(row, ["notes"]);
+      if (typeof notes !== "string" || !notes.trim()) return "";
+      const match = notes.match(/carrier\s*:\s*([^\n\r]+)/i);
+      return match?.[1] ? normalizeCarrierKey(match[1]) : "";
+    };
+
+    const getPolicyCarrierKey = (policy: MondayComDeal) => normalizeCarrierKey(policy.carrier);
+
+    const getDdfCarrierKeys = (row: Record<string, unknown>) => {
+      const keys = new Set<string>();
+      const direct = normalizeCarrierKey(pickRowValue(row, ["carrier"]));
+      const fromNotes = getCarrierFromNotes(row);
+      if (direct) keys.add(direct);
+      if (fromNotes) keys.add(fromNotes);
+      return keys;
+    };
+
+    const isCarrierCompatible = (policy: MondayComDeal, row: Record<string, unknown>) => {
+      const policyCarrierKey = getPolicyCarrierKey(policy);
+      if (!policyCarrierKey) return true;
+      const ddfCarrierKeys = getDdfCarrierKeys(row);
+      if (ddfCarrierKeys.size === 0) return true;
+      return ddfCarrierKeys.has(policyCarrierKey);
+    };
+
+    const getDdfTimestamp = (row: Record<string, unknown>) => {
+      const candidates = ["date", "updated_at", "created_at"];
+      for (const field of candidates) {
+        const raw = row[field];
+        if (typeof raw !== "string") continue;
+        const parsed = Date.parse(raw);
+        if (Number.isFinite(parsed)) return parsed;
+      }
+      return 0;
+    };
+
+    const pickNewestDdf = (rows: Array<Record<string, unknown>>) => {
+      if (rows.length === 0) return null;
+      return rows.reduce((latest, row) => (getDdfTimestamp(row) > getDdfTimestamp(latest) ? row : latest));
+    };
+
+    const hasTargetPolicyValues = (row: Record<string, unknown>) =>
+      pickRowValue(row, ["monthly_premium", "premium", "monthlyPremium"]) != null ||
+      pickRowValue(row, ["face_amount", "coverage_amount", "coverage", "faceAmount"]) != null ||
+      pickRowValue(row, ["draft_date", "initial_draft_date", "initialDraftDate"]) != null;
+
+    const getExactCompatibleCandidates = (policy: MondayComDeal) => {
+      const policyNameKey = getPolicyNameKey(policy);
+      if (!policyNameKey) return [] as Array<Record<string, unknown>>;
+
+      const policyPhoneKey = getPolicyPhoneKey(policy);
+      const policyVendorKey = getPolicyVendorKey(policy);
+
+      return ddfRows.filter((row) => {
+        const dk = ddfKeyFor(row);
+        if (usedDdfIds.has(dk)) return false;
+        if (!hasTargetPolicyValues(row)) return false;
+        if (getDdfInsuredNameKey(row) !== policyNameKey) return false;
+
+        const ddfPhoneKey = getDdfPhoneKey(row);
+        if (policyPhoneKey && ddfPhoneKey && ddfPhoneKey !== policyPhoneKey) return false;
+
+        const ddfVendorKey = getDdfVendorKey(row);
+        if (policyVendorKey && ddfVendorKey && ddfVendorKey !== policyVendorKey) return false;
+
+        return isCarrierCompatible(policy, row);
+      });
+    };
+
+    const getRelaxedCompatibleCandidates = (policy: MondayComDeal) => {
+      const policyNameKey = getPolicyNameKey(policy);
+      if (!policyNameKey) return [] as Array<Record<string, unknown>>;
+
+      const policyVendorKey = getPolicyVendorKey(policy);
+
+      return ddfRows.filter((row) => {
+        const dk = ddfKeyFor(row);
+        if (usedDdfIds.has(dk)) return false;
+        if (!hasTargetPolicyValues(row)) return false;
+        if (getDdfInsuredNameKey(row) !== policyNameKey) return false;
+
+        const ddfVendorKey = getDdfVendorKey(row);
+        if (policyVendorKey && ddfVendorKey && ddfVendorKey !== policyVendorKey) return false;
+
+        return isCarrierCompatible(policy, row);
+      });
+    };
+
     // 1) Exact policy_number matches first (unique)
     for (const policy of policyCards ?? []) {
       const key =
@@ -1421,6 +1506,7 @@ export function useAssignedLeadDetails() {
       if (!policyNo) continue;
 
       const match = ddfRows.find((r) => {
+        if (!hasTargetPolicyValues(r)) return false;
         const rNo = getDdfPolicyNumber(r);
         if (!rNo || rNo !== policyNo) return false;
         const dk = ddfKeyFor(r);
@@ -1432,27 +1518,105 @@ export function useAssignedLeadDetails() {
       }
     }
 
-    // 2) Remaining policies: best-score unused row
+    // 2) Remaining policies: if populated rows are exactly compatible, claim the newest one immediately.
     for (const policy of policyCards ?? []) {
       const key =
         (policy.monday_item_id && policy.monday_item_id.trim().length ? `item:${policy.monday_item_id.trim()}` : null) ??
         `id:${String(policy.id)}`;
       if (policyToDdf.has(key)) continue;
 
-      let best: Record<string, unknown> | null = null;
-      let bestScore = -1;
-      for (const r of ddfRows) {
-        const dk = ddfKeyFor(r);
-        if (usedDdfIds.has(dk)) continue;
-        const s = scoreDdfForPolicy(policy, r);
-        if (s > bestScore) {
-          bestScore = s;
-          best = r;
+      const exactCompatibleCandidates = getExactCompatibleCandidates(policy);
+      if (exactCompatibleCandidates.length >= 1) {
+        const match = pickNewestDdf(exactCompatibleCandidates);
+        if (!match) continue;
+        policyToDdf.set(key, match);
+        usedDdfIds.add(ddfKeyFor(match));
+      }
+    }
+
+    // 3) Single-policy fallback: if there is one visible policy, allow the newest populated
+    // compatible DDF row to match even when phone data differs between systems.
+    if ((policyCards?.length ?? 0) === 1) {
+      const policy = policyCards[0];
+      const key =
+        (policy.monday_item_id && policy.monday_item_id.trim().length ? `item:${policy.monday_item_id.trim()}` : null) ??
+        `id:${String(policy.id)}`;
+
+      if (!policyToDdf.has(key)) {
+        const relaxedCompatibleCandidates = getRelaxedCompatibleCandidates(policy);
+        if (relaxedCompatibleCandidates.length >= 1) {
+          const match = pickNewestDdf(relaxedCompatibleCandidates);
+          if (match) {
+            policyToDdf.set(key, match);
+            usedDdfIds.add(ddfKeyFor(match));
+          }
         }
       }
-      if (best) {
-        policyToDdf.set(key, best);
-        usedDdfIds.add(ddfKeyFor(best));
+    }
+
+    // 4) Remaining policies: resolve by person-level candidates, then carrier, then recency.
+    for (const policy of policyCards ?? []) {
+      const key =
+        (policy.monday_item_id && policy.monday_item_id.trim().length ? `item:${policy.monday_item_id.trim()}` : null) ??
+        `id:${String(policy.id)}`;
+      if (policyToDdf.has(key)) continue;
+
+      const policyNameKey = getPolicyNameKey(policy);
+      if (!policyNameKey) continue;
+      const policyPhoneKey = getPolicyPhoneKey(policy);
+      const policyVendorKey = getPolicyVendorKey(policy);
+      const policyCarrierKey = getPolicyCarrierKey(policy);
+
+      const personCandidates = ddfRows.filter((r) => {
+        const dk = ddfKeyFor(r);
+        if (usedDdfIds.has(dk)) return false;
+        if (!hasTargetPolicyValues(r)) return false;
+        if (getDdfInsuredNameKey(r) !== policyNameKey) return false;
+
+        const ddfPhoneKey = getDdfPhoneKey(r);
+        if (policyPhoneKey && ddfPhoneKey && ddfPhoneKey !== policyPhoneKey) return false;
+
+        const ddfVendorKey = getDdfVendorKey(r);
+        if (policyVendorKey && ddfVendorKey && ddfVendorKey !== policyVendorKey) return false;
+
+        return true;
+      });
+
+      if (personCandidates.length === 1) {
+        const match = personCandidates[0];
+        if (!isCarrierCompatible(policy, match)) continue;
+        policyToDdf.set(key, match);
+        usedDdfIds.add(ddfKeyFor(match));
+        continue;
+      }
+
+      if (personCandidates.length > 1) {
+        const carrierCandidates = policyCarrierKey
+          ? personCandidates.filter((row) => getDdfCarrierKeys(row).has(policyCarrierKey))
+          : [];
+
+        if (carrierCandidates.length === 1) {
+          const match = carrierCandidates[0];
+          policyToDdf.set(key, match);
+          usedDdfIds.add(ddfKeyFor(match));
+          continue;
+        }
+
+        if (carrierCandidates.length > 1) {
+          const match = pickNewestDdf(carrierCandidates);
+          if (match) {
+            policyToDdf.set(key, match);
+            usedDdfIds.add(ddfKeyFor(match));
+            continue;
+          }
+        }
+
+        const fallbackMatch = pickNewestDdf(personCandidates);
+        if (fallbackMatch) {
+          policyToDdf.set(key, fallbackMatch);
+          usedDdfIds.add(ddfKeyFor(fallbackMatch));
+          continue;
+        }
       }
     }
 
