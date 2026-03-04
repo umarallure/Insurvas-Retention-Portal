@@ -57,6 +57,35 @@ export function buildDigitWildcardPattern(digits: string) {
 
    const withoutLeadingArticle = s.replace(/^the\s+/, "").trim();
 
+   const aliasMap: Record<string, string> = {
+     // Common BPO suffix differences
+     "argon comm bpo": "argon comm",
+     "plexi bpo": "plexi",
+     "corebiz bpo": "corebiz",
+     "ambition bpo": "ambition",
+     "crossnotch bpo": "crossnotch",
+     "digicon bpo": "digicon",
+     "crafting leads bpo": "crafting leads",
+     "downtown bpo": "downtown",
+     "downtown": "downtown bpo",
+
+     // Known name variants
+     "maverick communications": "maverick",
+     "arktech bpo": "ark tech",
+     "ark tech bpo": "ark tech",
+     "everline solution bpo": "everline solution",
+     "poshenee tech": "poshenee",
+     "sellerz bpo": "sellerz",
+     "seller bpo": "sellerz",
+     "seller": "sellerz",
+     "pro soliutions bpo": "pro solutions",
+     "pro solutions bpo": "pro solutions",
+
+     // Explicit one-offs from audit list
+     "reliant bpo": "reliant",
+     "ethos": "ethos bpo",
+   };
+
    // Remove common legal suffixes so "Ambition" can match "Ambition BPO".
    const suffixes = new Set([
      "bpo",
@@ -76,7 +105,8 @@ export function buildDigitWildcardPattern(digits: string) {
    while (parts.length > 1 && suffixes.has(parts[parts.length - 1] ?? "")) {
      parts.pop();
    }
-   return parts.join(" ");
+   const normalized = parts.join(" ");
+   return aliasMap[normalized] ?? normalized;
  }
 
 export function getString(row: LeadRecord | null, key: string): string | null {
