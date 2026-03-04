@@ -284,6 +284,20 @@ export function useAssignedLeadDetails() {
   useEffect(() => {
     if (!router.isReady) return;
 
+    // Clear previous lead/policy state immediately on route navigation so old
+    // values don't flash while the next deal is loading.
+    setSelectedDeal(null);
+    setMondayDeals([]);
+    setLead(null);
+    setPersonalLead(null);
+    setAllPersonalLeads([]);
+    setDuplicateResult(null);
+    setDuplicateError(null);
+    setDailyFlowRows([]);
+    setDailyFlowError(null);
+    setSelectedPolicyKey(null);
+    hasAutoSelectedRef.current = false;
+
     const id = typeof idParam === "string" ? idParam : Array.isArray(idParam) ? idParam[0] : undefined;
     const leadId = id && id.trim().length ? id : null;
 
@@ -1405,6 +1419,7 @@ export function useAssignedLeadDetails() {
       if (typeof value !== "string") return "";
       const normalized = value.trim().toLowerCase();
       if (normalized === "amam" || normalized === "anam") return "anam";
+      if (normalized === "rna" || normalized === "royal neighbors") return "royal neighbors";
       return normalized;
     };
 
