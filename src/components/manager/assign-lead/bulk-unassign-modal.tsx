@@ -45,6 +45,8 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
+const VICIDIAL_UNASSIGN_BATCH_SIZE = 10;
+
 export function BulkUnassignModal(props: BulkUnassignModalProps) {
   const { toast } = useToast();
   const { open, onOpenChange, agents, onCompleted } = props;
@@ -253,22 +255,26 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
         }
       }
 
-      // Best-effort VICIdial cleanup per assignment row.
-      for (const row of assignedRows) {
-        try {
-          await fetch("/api/vicidial/unassign-lead", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              assignment_id: row.id,
-              agent_profile_id: row.assignee_profile_id ?? undefined,
-              deal_id: row.deal_id ?? undefined,
-              phone_number: row.deal_id ? phoneByDealId.get(row.deal_id) ?? undefined : undefined,
-            }),
-          });
-        } catch (cleanupErr) {
-          console.warn("[VICIdial] Bulk unassign cleanup warning:", cleanupErr);
-        }
+      // Best-effort VICIdial cleanup per assignment row, executed in parallel batches.
+      for (const cleanupBatch of chunk(assignedRows, VICIDIAL_UNASSIGN_BATCH_SIZE)) {
+        await Promise.all(
+          cleanupBatch.map(async (row) => {
+            try {
+              await fetch("/api/vicidial/unassign-lead", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  assignment_id: row.id,
+                  agent_profile_id: row.assignee_profile_id ?? undefined,
+                  deal_id: row.deal_id ?? undefined,
+                  phone_number: row.deal_id ? phoneByDealId.get(row.deal_id) ?? undefined : undefined,
+                }),
+              });
+            } catch (cleanupErr) {
+              console.warn("[VICIdial] Bulk unassign cleanup warning:", cleanupErr);
+            }
+          }),
+        );
       }
 
       const ids = assignedRows.map((r) => r.id);

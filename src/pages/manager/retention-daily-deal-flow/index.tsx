@@ -194,22 +194,33 @@ export default function RetentionDailyDealFlowPage() {
   const tableColumns = useMemo<string[]>(() => {
     return [
       "insured_name",
-      "client_phone_number",
       "policy_number",
       "lead_vendor",
       "carrier",
-      "product_type",
       "retention_agent",
       "licensed_agent_account",
-      "agent",
-      "buffer_agent",
       "status",
-      "call_result",
       "monthly_premium",
       "face_amount",
       "notes",
     ];
   }, []);
+
+  const columnWidthByKey = useMemo<Record<string, string>>(
+    () => ({
+      insured_name: "240px",
+      policy_number: "140px",
+      lead_vendor: "150px",
+      carrier: "120px",
+      retention_agent: "160px",
+      licensed_agent_account: "160px",
+      status: "130px",
+      monthly_premium: "130px",
+      face_amount: "130px",
+      notes: "240px",
+    }),
+    [],
+  );
 
   const visibleRows = rawRows;
 
@@ -298,47 +309,19 @@ export default function RetentionDailyDealFlowPage() {
                 <div className="p-3 text-sm text-muted-foreground">No retention deals found.</div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm border-collapse" style={{ minWidth: "1800px" }}>
+                  <table className="w-full text-sm border-collapse" style={{ minWidth: "1500px" }}>
                     <thead className="bg-muted/30 sticky top-0 z-10">
                     <tr>
-                        {tableColumns.map((c: string, colIdx: number) => (
+                        {tableColumns.map((c: string) => (
                           <th
                             key={c}
                             className="text-left font-medium text-muted-foreground px-3 py-2 whitespace-nowrap border-b"
                             style={{
-                              width: colIdx === 0 ? "180px" : 
-                                     colIdx === 1 ? "140px" :
-                                     colIdx === 2 ? "120px" :
-                                     colIdx === 3 ? "140px" :
-                                     colIdx === 4 ? "100px" :
-                                     colIdx === 5 ? "100px" :
-                                     colIdx === 6 ? "140px" :
-                                     colIdx === 7 ? "120px" :
-                                     colIdx === 8 ? "100px" :
-                                     colIdx === 9 ? "120px" :
-                                     colIdx === 10 ? "100px" :
-                                     colIdx === 11 ? "120px" :
-                                     colIdx === 12 ? "100px" :
-                                     colIdx === 13 ? "100px" :
-                                     "200px",
-                              minWidth: colIdx === 0 ? "180px" : 
-                                        colIdx === 1 ? "140px" :
-                                        colIdx === 2 ? "120px" :
-                                        colIdx === 3 ? "140px" :
-                                        colIdx === 4 ? "100px" :
-                                        colIdx === 5 ? "100px" :
-                                        colIdx === 6 ? "140px" :
-                                        colIdx === 7 ? "120px" :
-                                        colIdx === 8 ? "100px" :
-                                        colIdx === 9 ? "120px" :
-                                        colIdx === 10 ? "100px" :
-                                        colIdx === 11 ? "120px" :
-                                        colIdx === 12 ? "100px" :
-                                        colIdx === 13 ? "100px" :
-                                        "200px",
+                              width: columnWidthByKey[c] ?? "180px",
+                              minWidth: columnWidthByKey[c] ?? "180px",
                             }}
                           >
-                          {toTitleCaseLabel(c)}
+                          {c === "insured_name" ? "Name / Phone" : toTitleCaseLabel(c)}
                         </th>
                       ))}
                     </tr>
@@ -348,53 +331,31 @@ export default function RetentionDailyDealFlowPage() {
                         const rowId = typeof r["id"] === "string" ? (r["id"] as string) : `row-${idx}`;
                         return (
                           <tr key={rowId} className="border-b hover:bg-muted/20">
-                            {tableColumns.map((c: string, colIdx: number) => {
+                            {tableColumns.map((c: string) => {
                           const v = r[c];
                           const text =
-                            v == null
-                              ? ""
-                              : typeof v === "string"
-                                    ? v.trim()
-                                    : typeof v === "number"
-                                      ? v.toLocaleString()
-                                      : typeof v === "boolean"
-                                  ? String(v)
-                                  : JSON.stringify(v);
+                            c === "insured_name"
+                              ? `${typeof r["insured_name"] === "string" ? (r["insured_name"] as string).trim() : ""}${
+                                  typeof r["client_phone_number"] === "string" && (r["client_phone_number"] as string).trim().length
+                                    ? ` | ${(r["client_phone_number"] as string).trim()}`
+                                    : ""
+                                }`
+                              : v == null
+                                ? ""
+                                : typeof v === "string"
+                                  ? v.trim()
+                                  : typeof v === "number"
+                                    ? v.toLocaleString()
+                                    : typeof v === "boolean"
+                                      ? String(v)
+                                      : JSON.stringify(v);
                           return (
                                 <td
                                   key={c}
                                   className="px-3 py-2 align-top"
                                   style={{
-                                    width: colIdx === 0 ? "180px" : 
-                                           colIdx === 1 ? "140px" :
-                                           colIdx === 2 ? "120px" :
-                                           colIdx === 3 ? "140px" :
-                                           colIdx === 4 ? "100px" :
-                                           colIdx === 5 ? "100px" :
-                                           colIdx === 6 ? "140px" :
-                                           colIdx === 7 ? "120px" :
-                                           colIdx === 8 ? "100px" :
-                                           colIdx === 9 ? "120px" :
-                                           colIdx === 10 ? "100px" :
-                                           colIdx === 11 ? "120px" :
-                                           colIdx === 12 ? "100px" :
-                                           colIdx === 13 ? "100px" :
-                                           "200px",
-                                    minWidth: colIdx === 0 ? "180px" : 
-                                              colIdx === 1 ? "140px" :
-                                              colIdx === 2 ? "120px" :
-                                              colIdx === 3 ? "140px" :
-                                              colIdx === 4 ? "100px" :
-                                              colIdx === 5 ? "100px" :
-                                              colIdx === 6 ? "140px" :
-                                              colIdx === 7 ? "120px" :
-                                              colIdx === 8 ? "100px" :
-                                              colIdx === 9 ? "120px" :
-                                              colIdx === 10 ? "100px" :
-                                              colIdx === 11 ? "120px" :
-                                              colIdx === 12 ? "100px" :
-                                              colIdx === 13 ? "100px" :
-                                              "200px",
+                                    width: columnWidthByKey[c] ?? "180px",
+                                    minWidth: columnWidthByKey[c] ?? "180px",
                                   }}
                                   title={text || undefined}
                                 >
