@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/router";
+import Link from "next/link";
 
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -99,7 +99,6 @@ const getNameSignature = (value: string | null | undefined) => {
 };
 
 export default function AssignedLeadsPage() {
-  const router = useRouter();
   const [search, setSearch] = useState("");
   const [carrierFilter, setCarrierFilter] = useState<string[]>([]);
   const [stageFilter, setStageFilter] = useState<DealCategory[]>([]);
@@ -694,29 +693,28 @@ export default function AssignedLeadsPage() {
                         </div>
                         <div className="flex flex-col items-end justify-center gap-2">
                           {activeTab === "assigned" ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="gap-1"
-                            onClick={() => {
-                              try {
-                                sessionStorage.setItem(
-                                  "assignedLeadsNavigationContext",
-                                  JSON.stringify({
-                                    dealIds: navigationContext.dealIds,
-                                    dealIdToPrimaryDealId: navigationContext.dealIdToPrimaryDealId,
-                                    createdAt: Date.now(),
-                                  }),
-                                );
-                              } catch {
-                                // ignore
-                              }
-                              const viewHref = `/agent/assigned-lead-details?dealId=${encodeURIComponent(String(primaryLead.deal_id ?? ""))}`;
-                              void router.push(viewHref);
-                            }}
-                          >
-                            <EyeIcon className="size-4" />
-                            View
+                          <Button size="sm" variant="outline" className="gap-1" asChild>
+                            <Link
+                              href={`/agent/assigned-lead-details?dealId=${encodeURIComponent(String(primaryLead.deal_id ?? ""))}`}
+                              reloadDocument
+                              onClick={() => {
+                                try {
+                                  sessionStorage.setItem(
+                                    "assignedLeadsNavigationContext",
+                                    JSON.stringify({
+                                      dealIds: navigationContext.dealIds,
+                                      dealIdToPrimaryDealId: navigationContext.dealIdToPrimaryDealId,
+                                      createdAt: Date.now(),
+                                    }),
+                                  );
+                                } catch {
+                                  // ignore
+                                }
+                              }}
+                            >
+                              <EyeIcon className="size-4" />
+                              View
+                            </Link>
                           </Button>
                           ) : (
                             <Button
@@ -786,28 +784,28 @@ export default function AssignedLeadsPage() {
                               </div>
                               <div className="flex flex-col items-end justify-center gap-2">
                                 {activeTab === "assigned" ? (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="gap-1"
-                                  onClick={() => {
-                                    try {
-                                      sessionStorage.setItem(
-                                        "assignedLeadsNavigationContext",
-                                        JSON.stringify({
-                                          dealIds: navigationContext.dealIds,
-                                          dealIdToPrimaryDealId: navigationContext.dealIdToPrimaryDealId,
-                                          createdAt: Date.now(),
-                                        }),
-                                      );
-                                    } catch {
-                                      // ignore
-                                    }
-                                    void router.push(viewHref);
-                                  }}
-                                >
-                                  <EyeIcon className="size-4" />
-                                  View
+                                <Button size="sm" variant="outline" className="gap-1" asChild>
+                                  <Link
+                                    href={viewHref}
+                                    reloadDocument
+                                    onClick={() => {
+                                      try {
+                                        sessionStorage.setItem(
+                                          "assignedLeadsNavigationContext",
+                                          JSON.stringify({
+                                            dealIds: navigationContext.dealIds,
+                                            dealIdToPrimaryDealId: navigationContext.dealIdToPrimaryDealId,
+                                            createdAt: Date.now(),
+                                          }),
+                                        );
+                                      } catch {
+                                        // ignore
+                                      }
+                                    }}
+                                  >
+                                    <EyeIcon className="size-4" />
+                                    View
+                                  </Link>
                                 </Button>
                                 ) : (
                                   <Button
