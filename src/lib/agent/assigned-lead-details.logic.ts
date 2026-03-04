@@ -269,6 +269,7 @@ export function useAssignedLeadDetails() {
   const [error, setError] = useState<string | null>(null);
   const [selectedPolicyKey, setSelectedPolicyKey] = useState<string | null>(null);
   const hasAutoSelectedRef = useRef(false);
+  const navRequestIdRef = useRef(0);
 
   const [verificationSessionId, setVerificationSessionId] = useState<string | null>(null);
   const [verificationItems, setVerificationItems] = useState<Array<Record<string, unknown>>>([]);
@@ -283,6 +284,7 @@ export function useAssignedLeadDetails() {
 
   useEffect(() => {
     if (!router.isReady) return;
+    const requestId = ++navRequestIdRef.current;
 
     // Clear previous lead/policy state immediately on route navigation so old
     // values don't flash while the next deal is loading.
@@ -358,11 +360,11 @@ export function useAssignedLeadDetails() {
               relatedDeals = ((relatedRows ?? []) as MondayComDeal[]) ?? [];
             }
 
-            if (!cancelled) {
+            if (!cancelled && navRequestIdRef.current === requestId) {
               setSelectedDeal(deal);
               setMondayDeals(relatedDeals);
             }
-          } else if (!cancelled) {
+          } else if (!cancelled && navRequestIdRef.current === requestId) {
             setSelectedDeal(null);
             setMondayDeals([]);
           }
@@ -378,12 +380,12 @@ export function useAssignedLeadDetails() {
               .maybeSingle();
 
             if (leadErr) throw leadErr;
-            if (!cancelled) setLead((leadRow ?? null) as LeadRecord | null);
-          } else if (!cancelled) {
+            if (!cancelled && navRequestIdRef.current === requestId) setLead((leadRow ?? null) as LeadRecord | null);
+          } else if (!cancelled && navRequestIdRef.current === requestId) {
             setLead(null);
           }
 
-          if (!cancelled) {
+          if (!cancelled && navRequestIdRef.current === requestId) {
             setMondayLoading(false);
             setMondayError(null);
           }
@@ -399,12 +401,12 @@ export function useAssignedLeadDetails() {
 
           if (leadsError) throw leadsError;
 
-          if (!cancelled) {
+          if (!cancelled && navRequestIdRef.current === requestId) {
             setLead((data ?? null) as LeadRecord | null);
           }
         }
       } catch (e) {
-        if (!cancelled) {
+        if (!cancelled && navRequestIdRef.current === requestId) {
           const msg = e instanceof Error ? e.message : "Failed to load lead.";
           setError(msg);
           setSelectedDeal(null);
@@ -414,7 +416,7 @@ export function useAssignedLeadDetails() {
           setMondayError(msg);
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && navRequestIdRef.current === requestId) setLoading(false);
       }
     };
 
@@ -892,6 +894,7 @@ export function useAssignedLeadDetails() {
   }, [dealId, navDealIdToPrimaryDealId, router, assignedDealsLoading]);
 
   useEffect(() => {
+    const requestId = navRequestIdRef.current;
     if (selectedDeal) {
       setPersonalLead(null);
       setAllPersonalLeads([]);
@@ -927,8 +930,10 @@ export function useAssignedLeadDetails() {
     }
 
     let cancelled = false;
+    const isStale = () => cancelled || navRequestIdRef.current !== requestId;
 
     const run = async () => {
+      if (isStale()) return;
       setMondayLoading(true);
       setMondayError(null);
       setDuplicateLoading(true);
@@ -959,12 +964,12 @@ export function useAssignedLeadDetails() {
           includeMondayDeals: true,
         });
 
-        if (!cancelled) {
+        if (!isStale()) {
           setMondayDeals(deals);
           setDuplicateResult(res);
         }
       } catch (e) {
-        if (!cancelled) {
+        if (!isStale()) {
           const msg = e instanceof Error ? e.message : "Failed to load duplicate policies.";
           setMondayError(msg);
           setDuplicateError(msg);
@@ -972,7 +977,7 @@ export function useAssignedLeadDetails() {
           setDuplicateResult(null);
         }
       } finally {
-        if (!cancelled) {
+        if (!isStale()) {
           setMondayLoading(false);
           setDuplicateLoading(false);
         }
@@ -989,6 +994,7 @@ export function useAssignedLeadDetails() {
   const canonicalLeadRecord = personalLead ?? lead ?? (selectedDeal ? (selectedDeal as unknown as LeadRecord) : null);
 
   useEffect(() => {
+    const requestId = navRequestIdRef.current;
     const lookupName =
       getString(lead, "customer_full_name") ??
       getString(selectedDeal ? (selectedDeal as unknown as LeadRecord) : null, "ghl_name") ??
@@ -1025,13 +1031,15 @@ export function useAssignedLeadDetails() {
     }
 
     let cancelled = false;
+    const isStale = () => cancelled || navRequestIdRef.current !== requestId;
 
     const run = async () => {
+      if (isStale()) return;
       setPersonalLeadLoading(true);
       try {
         const escaped = lookupName.replace(/,/g, "").trim();
         if (!escaped.length) {
-          if (!cancelled) {
+          if (!isStale()) {
             setPersonalLead(null);
             setAllPersonalLeads([]);
           }
@@ -1052,12 +1060,12 @@ export function useAssignedLeadDetails() {
         const allLeads = (byNameRows ?? []) as LeadRecord[];
         const mergedLead = mergeLeadRecords(allLeads, leadVendor);
 
-        if (!cancelled) {
+        if (!isStale()) {
           setAllPersonalLeads(allLeads);
           setPersonalLead(mergedLead);
         }
       } finally {
-        if (!cancelled) setPersonalLeadLoading(false);
+        if (!isStale()) setPersonalLeadLoading(false);
       }
     };
 
@@ -1145,15 +1153,26 @@ export function useAssignedLeadDetails() {
   }, [personalLeadRecord]);
 
   useEffect(() => {
-    if (!lead) {
+    const requestId = navRequestIdRef.current;
+    const fallbackPhone =
+      getString(lead, "phone_number") ??
+      getString(selectedDeal ? (selectedDeal as unknown as LeadRecord) : null, "phone_number") ??
+      null;
+    const fallbackName =
+      getString(lead, "customer_full_name") ??
+      getString(selectedDeal ? (selectedDeal as unknown as LeadRecord) : null, "ghl_name") ??
+      getString(selectedDeal ? (selectedDeal as unknown as LeadRecord) : null, "deal_name") ??
+      null;
+
+    if (!fallbackPhone && !fallbackName) {
       setDailyFlowRows([]);
       setDailyFlowError(null);
       setDailyFlowLoading(false);
       return;
     }
 
-    const p = getString(canonicalLeadRecord, "phone_number");
-    const insuredName = getString(canonicalLeadRecord, "customer_full_name");
+    const p = fallbackPhone;
+    const insuredName = fallbackName;
 
     const insuredNameEscaped = (insuredName ?? "").replace(/,/g, "").trim();
 
@@ -1172,8 +1191,10 @@ export function useAssignedLeadDetails() {
     }
 
     let cancelled = false;
+    const isStale = () => cancelled || navRequestIdRef.current !== requestId;
 
     const load = async () => {
+      if (isStale()) return;
       setDailyFlowLoading(true);
       setDailyFlowError(null);
       try {
@@ -1201,20 +1222,20 @@ export function useAssignedLeadDetails() {
 
         const exactRows = (data ?? []) as Array<Record<string, unknown>>;
         if (exactRows.length > 0) {
-          if (!cancelled) setDailyFlowRows(exactRows);
+          if (!isStale()) setDailyFlowRows(exactRows);
           return;
         }
 
         const digits = normalizePhoneDigits(p ?? "");
         const last10 = digits.length >= 10 ? digits.slice(-10) : digits;
         if (!last10) {
-          if (!cancelled) setDailyFlowRows([]);
+          if (!isStale()) setDailyFlowRows([]);
           return;
         }
 
         const pattern = buildDigitWildcardPattern(last10);
         if (!pattern) {
-          if (!cancelled) setDailyFlowRows([]);
+          if (!isStale()) setDailyFlowRows([]);
           return;
         }
 
@@ -1229,9 +1250,9 @@ export function useAssignedLeadDetails() {
         const { data: fuzzyData, error: fuzzyErr } = await fq;
 
         if (fuzzyErr) throw fuzzyErr;
-        if (!cancelled) setDailyFlowRows((fuzzyData ?? []) as Array<Record<string, unknown>>);
+        if (!isStale()) setDailyFlowRows((fuzzyData ?? []) as Array<Record<string, unknown>>);
       } catch (e) {
-        if (!cancelled) {
+        if (!isStale()) {
           const err = e as unknown;
           const maybe =
             err && typeof err === "object"
@@ -1259,7 +1280,7 @@ export function useAssignedLeadDetails() {
           setDailyFlowRows([]);
         }
       } finally {
-        if (!cancelled) setDailyFlowLoading(false);
+        if (!isStale()) setDailyFlowLoading(false);
       }
     };
 
@@ -1268,7 +1289,7 @@ export function useAssignedLeadDetails() {
     return () => {
       cancelled = true;
     };
-  }, [canonicalLeadRecord, lead]);
+  }, [lead, selectedDeal]);
 
   const policyCards = useMemo(() => {
     const all: MondayComDeal[] = [];
