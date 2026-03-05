@@ -14,8 +14,11 @@ const GROUPS: DealGroup[] = [
   {
     id: "failed_payment",
     title: "Failed Payment",
-    queryTitleIlike: ["%FDPF%", "%Failed Payment%"],
-    excludeStageIlike: ["%Chargeback%", "%Charged Back%"],
+    queryStages: [
+      "FDPF Pending Reason",
+      "FDPF Incorrect Banking Info",
+      "FDPF Insufficient Funds",
+    ],
     color: "#B91C1C",
   },
   {
