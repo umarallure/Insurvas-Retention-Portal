@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { callVicidialAdminApi } from "@/lib/vicidial";
-import { getVicidialAgentMapping } from "@/lib/vicidial-agent-mapping";
+import { getVicidialAgentMappingFromDb } from "@/lib/vicidial-agent-mapping";
 import { findVicidialLeadIndex, removeVicidialLeadIndex } from "@/lib/vicidial-lead-index";
 
 type UnassignBody = {
@@ -93,7 +93,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const body = (req.body ?? {}) as UnassignBody;
     const assignmentId = body.assignment_id != null ? String(body.assignment_id).trim() : "";
     const agentProfileId = body.agent_profile_id != null ? String(body.agent_profile_id).trim() : "";
-    const mapping = getVicidialAgentMapping(agentProfileId || null);
+    const mapping = await getVicidialAgentMappingFromDb(agentProfileId || null);
     const dealId = body.deal_id != null ? String(body.deal_id).trim() : "";
     const phone = normalizePhone(body.phone_number);
     const listId = body.list_id != null ? String(body.list_id).trim() : String(mapping?.listId ?? "").trim();

@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { getDealLabelStyle, getDealTagLabelFromGhlStage } from "@/lib/monday-deal-category-tags";
 import { VicidialWrapper, type VicidialWrapperHandle } from "@/components/vicidial/vicidial-wrapper";
-import { getVicidialAgentMapping } from "@/lib/vicidial-agent-mapping";
+import { getVicidialAgentMappingFromDb } from "@/lib/vicidial-agent-mapping";
 import { useToast } from "@/hooks/use-toast";
 
 type QueueLeadRow = {
@@ -42,7 +42,9 @@ export default function AgentDialerDashboard() {
   const [sessionActive, setSessionActive] = useState(false);
   const [sessionUpdating, setSessionUpdating] = useState(false);
   const [callingLeadId, setCallingLeadId] = useState<string | null>(null);
-  const vicidialAgentUser = "hussain_khan";
+  const [vicidialAgentUser, setVicidialAgentUser] = useState<string>(
+    () => process.env.NEXT_PUBLIC_VICIDIAL_AGENT_USER ?? ""
+  );
   const defaultVicidialCampaignId = process.env.NEXT_PUBLIC_VICIDIAL_CAMPAIGN_ID || "ret1cda9";
 
   const [vicidialCampaignId, setVicidialCampaignId] = useState<string | undefined>(() => {
@@ -151,10 +153,23 @@ export default function AgentDialerDashboard() {
 
   useEffect(() => {
     if (!profileId) return;
-    const mapping = getVicidialAgentMapping(profileId);
-    if (mapping?.campaignId) {
-      setVicidialCampaignId(mapping.campaignId);
-    }
+    let cancelled = false;
+    void (async () => {
+      const mapping = await getVicidialAgentMappingFromDb(profileId);
+      if (cancelled || !mapping) return;
+
+      if (mapping.campaignId) {
+        setVicidialCampaignId(String(mapping.campaignId));
+      }
+      const mappedUser = mapping.vicidialUser || mapping.phoneLogin || "";
+      if (mappedUser) {
+        setVicidialAgentUser(mappedUser);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [profileId]);
 
   const handleRefresh = () => {
@@ -432,19 +447,6 @@ export default function AgentDialerDashboard() {
               <PhoneIcon className="h-5 w-5" />
               VICIdial
             </CardTitle>
-            <div className="flex items-center gap-2">
-              <Button
-                variant={sessionActive ? "secondary" : "default"}
-                size="sm"
-                onClick={() => void (sessionActive ? handleEndSession() : handleStartSession())}
-                disabled={sessionUpdating || !vicidialAgentUser}
-              >
-                {sessionUpdating ? (sessionActive ? "Ending..." : "Starting...") : (sessionActive ? "End Session" : "Start Session")}
-              </Button>
-              <Badge variant={sessionActive ? "default" : "secondary"}>
-                {sessionActive ? "Active" : "Inactive"}
-              </Badge>
-            </div>
           </div>
         </CardHeader>
         <CardContent className="flex-1 min-h-0 p-0 relative">

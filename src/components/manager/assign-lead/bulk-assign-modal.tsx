@@ -422,6 +422,7 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
         const { data: phoneDupRows, error: phoneDupErr } = await supabase
           .from("monday_com_deals")
           .select("id, phone_number")
+          .eq("is_active", true)
           .not("monday_item_id", "is", null)
           .in("phone_number", phones)
           .limit(10000);
@@ -458,6 +459,7 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
           const { data, error } = await supabase
             .from("monday_com_deals")
             .select("id")
+            .eq("is_active", true)
             .not("monday_item_id", "is", null)
             .or(`ghl_name.ilike.%${escaped}%,deal_name.ilike.%${escaped}%`)
             .limit(10000);

@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import mysql from "mysql2/promise";
 import { callVicidialAdminApi, type VicidialParams } from "@/lib/vicidial";
-import { buildLeadDetailsUrl, getVicidialAgentMapping } from "@/lib/vicidial-agent-mapping";
+import { buildLeadDetailsUrl, getVicidialAgentMappingFromDb } from "@/lib/vicidial-agent-mapping";
 import { upsertVicidialLeadIndex } from "@/lib/vicidial-lead-index";
 
 type AddLeadRequestBody = {
@@ -95,7 +95,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   try {
     const phoneNumber = normalizeUsPhone(body.phone_number);
     const names = splitName(body.full_name, body.first_name, body.last_name);
-    const mapping = getVicidialAgentMapping(body.agent_profile_id ?? null);
+    const mapping = await getVicidialAgentMappingFromDb(body.agent_profile_id ?? null);
     const campaignId =
       body.campaign_id ??
       mapping?.campaignId ??

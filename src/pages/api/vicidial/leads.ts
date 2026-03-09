@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import mysql from "mysql2/promise";
-import { getVicidialAgentMapping } from "@/lib/vicidial-agent-mapping";
+import { getVicidialAgentMappingFromDb } from "@/lib/vicidial-agent-mapping";
 
 type LeadsRequestBody = {
   profile_id?: string;
@@ -59,7 +59,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   try {
     const body = (req.body ?? {}) as LeadsRequestBody;
-    const mapping = getVicidialAgentMapping(body.profile_id ?? null);
+    const mapping = await getVicidialAgentMappingFromDb(body.profile_id ?? null);
     const listId = body.list_id ?? mapping?.listId;
     const campaignId = body.campaign_id ?? mapping?.campaignId;
     const limit = Math.max(1, Math.min(200, Number(body.limit ?? 50)));
