@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,30 +9,98 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { supabase } from "@/lib/supabase";
 import {
   PhoneIcon,
-  ExternalLinkIcon,
   RefreshCwIcon,
   UsersIcon,
   Loader2Icon,
 } from "lucide-react";
-import { getDealLabelStyle, getDealTagLabelFromGhlStage } from "@/lib/monday-deal-category-tags";
-import { VicidialWrapper, type VicidialWrapperHandle } from "@/components/vicidial/vicidial-wrapper";
+import { type VicidialWrapperHandle } from "@/components/vicidial/vicidial-wrapper";
 import { getVicidialAgentMappingFromDb } from "@/lib/vicidial-agent-mapping";
 import { useToast } from "@/hooks/use-toast";
 
 type QueueLeadRow = {
-  id: string;
-  deal_id: number | null;
+  lead_id: string;
+  hopper_order: string;
+  priority: string;
+  list_id: string;
+  phone_number: string;
   status: string;
-  assigned_at: string;
-  deal?: {
-    ghl_name: string | null;
-    deal_name: string | null;
-    ghl_stage?: string | null;
-    phone_number: string | null;
-    carrier: string | null;
-    disposition: string | null;
-  } | null;
+  last_call_time: string;
+  first_name?: string;
+  last_name?: string;
+  display_name?: string;
 };
+
+type HopperApiResponse =
+  | {
+      ok: true;
+      rows: QueueLeadRow[];
+      raw: string;
+      active_lead_id: string | null;
+    }
+  | {
+      ok: false;
+      error: string;
+      details?: unknown;
+      raw?: string;
+      active_lead_id: string | null;
+    };
+
+function toNumberOrNull(value: string) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function orderQueueLeads(rows: QueueLeadRow[], activeLeadId: string | null, callingLeadId: string | null) {
+  return [...rows].sort((a, b) => {
+    const aLive = activeLeadId && a.lead_id === activeLeadId ? 1 : 0;
+    const bLive = activeLeadId && b.lead_id === activeLeadId ? 1 : 0;
+    if (aLive !== bLive) return bLive - aLive;
+
+    const aCalling = callingLeadId && a.lead_id === callingLeadId ? 1 : 0;
+    const bCalling = callingLeadId && b.lead_id === callingLeadId ? 1 : 0;
+    if (aCalling !== bCalling) return bCalling - aCalling;
+
+    const aPriority = toNumberOrNull(a.priority) ?? -1;
+    const bPriority = toNumberOrNull(b.priority) ?? -1;
+    if (aPriority !== bPriority) return bPriority - aPriority;
+
+    const aOrder = toNumberOrNull(a.hopper_order) ?? Number.MAX_SAFE_INTEGER;
+    const bOrder = toNumberOrNull(b.hopper_order) ?? Number.MAX_SAFE_INTEGER;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+
+    return a.lead_id.localeCompare(b.lead_id);
+  });
+}
+
+function playRingPing() {
+  try {
+    const Ctor =
+      window.AudioContext ||
+      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctor) return;
+
+    const ctx = new Ctor();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.06, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.2);
+    void osc.onended;
+    setTimeout(() => {
+      void ctx.close();
+    }, 250);
+  } catch {
+    // Ignore audio failures (autoplay restrictions, unsupported browser, etc.)
+  }
+}
 
 export default function AgentDialerDashboard() {
   const [queueLeads, setQueueLeads] = useState<QueueLeadRow[]>([]);
@@ -42,6 +110,7 @@ export default function AgentDialerDashboard() {
   const [sessionActive, setSessionActive] = useState(false);
   const [sessionUpdating, setSessionUpdating] = useState(false);
   const [callingLeadId, setCallingLeadId] = useState<string | null>(null);
+  const [activeLeadId, setActiveLeadId] = useState<string | null>(null);
   const [vicidialAgentUser, setVicidialAgentUser] = useState<string>(
     () => process.env.NEXT_PUBLIC_VICIDIAL_AGENT_USER ?? ""
   );
@@ -81,15 +150,15 @@ export default function AgentDialerDashboard() {
   })();
   const { toast } = useToast();
   const vicidialWrapperRef = useRef<VicidialWrapperHandle | null>(null);
+  const lastActiveLeadIdRef = useRef<string | null>(null);
 
-  // Load assigned leads queue
-  const loadQueue = useCallback(async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.user) {
-        setQueueLeads([]);
-        return;
-      }
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.user || cancelled) return;
 
       const { data: profile } = await supabase
         .from("profiles")
@@ -97,59 +166,72 @@ export default function AgentDialerDashboard() {
         .eq("user_id", session.user.id)
         .single();
 
-      if (!profile) {
+      if (cancelled) return;
+      setProfileId(profile?.id ?? null);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Load dial queue from VICIdial hopper API (not Supabase assignments).
+  const loadQueue = useCallback(async (opts?: { showErrorToast?: boolean }) => {
+    try {
+      if (!vicidialCampaignId) {
         setQueueLeads([]);
-        return;
-      }
-      setProfileId(profile.id);
-
-      // Get active assigned leads
-      const { data: assignments } = await supabase
-        .from("retention_assigned_leads")
-        .select("id, deal_id, status, assigned_at")
-        .eq("assignee_profile_id", profile.id)
-        .eq("status", "active")
-        .order("assigned_at", { ascending: true })
-        .limit(50);
-
-      if (!assignments?.length) {
-        setQueueLeads([]);
+        setActiveLeadId(null);
         return;
       }
 
-      // Get deal details
-      const dealIds = assignments.map(a => a.deal_id).filter((id): id is number => id != null);
-      if (dealIds.length === 0) {
-        setQueueLeads(assignments as QueueLeadRow[]);
-        return;
+      const response = await fetch("/api/vicidial/hopper", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          campaign_id: vicidialCampaignId,
+          agent_user: vicidialAgentUser || undefined,
+        }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as HopperApiResponse | null;
+      if (!response.ok || !payload || payload.ok === false) {
+        const reason =
+          payload && "error" in payload ? payload.error : `HTTP ${response.status}`;
+        throw new Error(reason || "Failed to load VICIdial hopper");
       }
 
-      const { data: deals } = await supabase
-        .from("monday_com_deals")
-        .select("id, ghl_name, deal_name, ghl_stage, phone_number, carrier, disposition")
-        .eq("is_active", true)
-        .in("id", dealIds)
-        .limit(5000);
-
-      const dealMap = new Map(deals?.map(d => [d.id, d]) ?? []);
-      
-      const enriched = assignments.map(a => ({
-        ...a,
-        deal: a.deal_id ? dealMap.get(a.deal_id) ?? null : null,
-      })) as QueueLeadRow[];
-
-      setQueueLeads(enriched);
+      const liveLeadId = payload.active_lead_id ? String(payload.active_lead_id).trim() : "";
+      const normalized = (payload.rows ?? []).filter((row) => row.lead_id && row.lead_id.trim().length > 0);
+      setActiveLeadId(liveLeadId || null);
+      setQueueLeads(normalized);
     } catch (error) {
       console.error("[dialer] Error loading queue:", error);
+      if (opts?.showErrorToast) {
+        toast({
+          variant: "destructive",
+          title: "Queue refresh failed",
+          description: error instanceof Error ? error.message : "Could not load VICIdial hopper.",
+        });
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [toast, vicidialAgentUser, vicidialCampaignId]);
 
   useEffect(() => {
     void loadQueue();
   }, [loadQueue]);
+
+  useEffect(() => {
+    if (!vicidialCampaignId) return;
+    const timer = window.setInterval(() => {
+      void loadQueue();
+    }, 10000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [loadQueue, vicidialCampaignId]);
 
   useEffect(() => {
     if (!profileId) return;
@@ -174,8 +256,20 @@ export default function AgentDialerDashboard() {
 
   const handleRefresh = () => {
     setRefreshing(true);
-    void loadQueue();
+    void loadQueue({ showErrorToast: true });
   };
+
+  const visibleQueueLeads = useMemo(
+    () => orderQueueLeads(queueLeads, activeLeadId, callingLeadId),
+    [activeLeadId, callingLeadId, queueLeads],
+  );
+
+  useEffect(() => {
+    if (!activeLeadId) return;
+    if (lastActiveLeadIdRef.current === activeLeadId) return;
+    lastActiveLeadIdRef.current = activeLeadId;
+    playRingPing();
+  }, [activeLeadId]);
 
   const handleStartSession = async () => {
     if (!vicidialAgentUser) {
@@ -267,7 +361,7 @@ export default function AgentDialerDashboard() {
       });
       return;
     }
-    const phone = lead.deal?.phone_number?.trim();
+    const phone = lead.phone_number?.trim();
     if (!phone) {
       console.error("[dialer] Selected lead has no phone number");
       toast({
@@ -277,7 +371,8 @@ export default function AgentDialerDashboard() {
       });
       return;
     }
-    setCallingLeadId(lead.id);
+    setCallingLeadId(lead.lead_id);
+    setActiveLeadId(lead.lead_id);
     try {
       // Ensure agent is paused before manual dial, per VICIdial expectations.
       await fetch("/api/vicidial/agent-status", {
@@ -309,6 +404,7 @@ export default function AgentDialerDashboard() {
         title: "Dialing",
         description: `Dial command sent for ${phone}`,
       });
+      void loadQueue();
     } catch (error) {
       console.error("[dialer] Failed to dial", error);
       const msg = error instanceof Error ? error.message : "Failed to dial lead.";
@@ -320,11 +416,6 @@ export default function AgentDialerDashboard() {
     } finally {
       setCallingLeadId(null);
     }
-  };
-
-  const openLeadDetails = (dealId: number) => {
-    // Open in new tab - call stays active in this tab
-    window.open(`/agent/assigned-lead-details?dealId=${dealId}`, "_blank");
   };
 
   return (
@@ -339,7 +430,7 @@ export default function AgentDialerDashboard() {
                 <UsersIcon className="h-4 w-4" />
                 Lead Queue
                 <Badge variant="secondary" className="ml-1">
-                  {queueLeads.length}
+                  {visibleQueueLeads.length}
                 </Badge>
               </CardTitle>
               <Button
@@ -359,73 +450,59 @@ export default function AgentDialerDashboard() {
                 <div className="flex items-center justify-center py-8">
                   <Loader2Icon className="h-6 w-6 animate-spin text-muted-foreground" />
                 </div>
-              ) : queueLeads.length === 0 ? (
+              ) : visibleQueueLeads.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground text-sm">
                   No leads in queue
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {queueLeads.map((lead) => {
-                    const name = lead.deal?.ghl_name || lead.deal?.deal_name || "Unknown";
-                    const phone = lead.deal?.phone_number || "No phone";
-                    const stage = lead.deal?.ghl_stage;
-                    const stageLabel = stage ? getDealTagLabelFromGhlStage(stage) : null;
-                    const stageStyle = stageLabel ? getDealLabelStyle(stageLabel) : null;
-                    const disposition = lead.deal?.disposition;
+                  {visibleQueueLeads.map((lead) => {
+                    const fullName = `${lead.first_name ?? ""} ${lead.last_name ?? ""}`.trim();
+                    const name = fullName || (lead.display_name ?? "").trim() || "Unknown";
+                    const phone = lead.phone_number || "No phone";
+                    const isLive = activeLeadId != null && lead.lead_id === activeLeadId;
+                    const isDialing = callingLeadId != null && lead.lead_id === callingLeadId;
+                    const isRinging = isLive || isDialing;
+                    const effectiveStatus = isDialing ? "CALLING" : isLive ? "INCALL" : (lead.status || "").toUpperCase();
 
                     return (
                       <div
-                        key={lead.id}
-                        className="group p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors cursor-pointer"
-                        onClick={() => lead.deal_id && openLeadDetails(lead.deal_id)}
+                        key={lead.lead_id}
+                        className={`p-3 rounded-lg border bg-card transition-colors ${
+                          isRinging
+                            ? "border-emerald-500 ring-2 ring-emerald-400/40 shadow-[0_0_0_2px_rgba(16,185,129,0.15)] bg-emerald-50/40"
+                            : "hover:bg-accent/50"
+                        }`}
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0 flex-1">
                             <div className="font-medium text-sm truncate">{name}</div>
                             <div className="text-xs text-muted-foreground truncate">{phone}</div>
                             <div className="flex items-center gap-2 mt-1">
-                              {stageLabel && stageStyle && (
-                                <Badge
-                                  variant="outline"
-                                  className="text-[10px] px-1.5 py-0"
-                                  style={{
-                                    backgroundColor: stageStyle.bg,
-                                    borderColor: stageStyle.border,
-                                    color: stageStyle.text,
-                                  }}
-                                >
-                                  {stageLabel}
+                              {isRinging ? (
+                                <Badge variant="default" className="text-[10px] px-1.5 py-0 bg-emerald-600">
+                                  <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
+                                  {isDialing ? "Ringing" : "Live"}
                                 </Badge>
-                              )}
-                              {disposition && (
-                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                                  {disposition}
+                              ) : null}
+                              {effectiveStatus ? (
+                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 uppercase">
+                                  {effectiveStatus}
                                 </Badge>
-                              )}
+                              ) : null}
                             </div>
                           </div>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (lead.deal_id) openLeadDetails(lead.deal_id);
-                            }}
-                          >
-                            <ExternalLinkIcon className="h-3.5 w-3.5" />
-                          </Button>
                           <Button
                             variant="outline"
                             size="sm"
                             className="h-7 px-2 text-[11px]"
-                            disabled={!lead.deal?.phone_number || callingLeadId === lead.id}
+                            disabled={!lead.phone_number || callingLeadId === lead.lead_id}
                             onClick={(e) => {
                               e.stopPropagation();
                               void handleDialLead(lead);
                             }}
                           >
-                            {callingLeadId === lead.id ? "Calling..." : "Call"}
+                            {callingLeadId === lead.lead_id ? "Calling..." : "Call"}
                           </Button>
                         </div>
                       </div>
