@@ -45,7 +45,23 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
-const VICIDIAL_UNASSIGN_BATCH_SIZE = 10;
+const VICIDIAL_UNASSIGN_MAX_PARALLEL = 10;
+
+async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>) {
+  const maxParallel = Math.max(1, Math.floor(concurrency));
+  let index = 0;
+
+  const runners = Array.from({ length: Math.min(maxParallel, items.length) }, async () => {
+    while (true) {
+      const current = index;
+      index += 1;
+      if (current >= items.length) return;
+      await worker(items[current]);
+    }
+  });
+
+  await Promise.all(runners);
+}
 
 export function BulkUnassignModal(props: BulkUnassignModalProps) {
   const { toast } = useToast();
@@ -255,27 +271,30 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
         }
       }
 
-      // Best-effort VICIdial cleanup per assignment row, executed in parallel batches.
-      for (const cleanupBatch of chunk(assignedRows, VICIDIAL_UNASSIGN_BATCH_SIZE)) {
-        await Promise.all(
-          cleanupBatch.map(async (row) => {
-            try {
-              await fetch("/api/vicidial/unassign-lead", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  assignment_id: row.id,
-                  agent_profile_id: row.assignee_profile_id ?? undefined,
-                  deal_id: row.deal_id ?? undefined,
-                  phone_number: row.deal_id ? phoneByDealId.get(row.deal_id) ?? undefined : undefined,
-                }),
-              });
-            } catch (cleanupErr) {
-              console.warn("[VICIdial] Bulk unassign cleanup warning:", cleanupErr);
-            }
-          }),
-        );
-      }
+      // Best-effort VICIdial cleanup per assignment row, executed in parallel with a cap.
+      await runWithConcurrency(assignedRows, VICIDIAL_UNASSIGN_MAX_PARALLEL, async (row) => {
+        try {
+          const response = await fetch("/api/vicidial/unassign-lead", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              assignment_id: row.id,
+              agent_profile_id: row.assignee_profile_id ?? undefined,
+              deal_id: row.deal_id ?? undefined,
+              phone_number: row.deal_id ? phoneByDealId.get(row.deal_id) ?? undefined : undefined,
+            }),
+          });
+
+          if (!response.ok) {
+            console.warn("[VICIdial] Bulk unassign cleanup warning: non-2xx response", {
+              assignmentId: row.id,
+              status: response.status,
+            });
+          }
+        } catch (cleanupErr) {
+          console.warn("[VICIdial] Bulk unassign cleanup warning:", cleanupErr);
+        }
+      });
 
       const ids = assignedRows.map((r) => r.id);
       for (const batch of chunk(ids, 200)) {
