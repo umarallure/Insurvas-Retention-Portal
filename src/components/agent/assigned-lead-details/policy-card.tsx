@@ -105,6 +105,30 @@ export function PolicyCard({
     }
   };
 
+  const handleCarrierRequirementsClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (expandedWorkflowKey === policy.key && activeWorkflowType === "carrier_requirements") {
+      onCancelWorkflow();
+      return;
+    }
+
+    const statusText = statusLabel.trim().toLowerCase();
+    const stageText = ((stageLabel ?? "") as string).toString().trim().toLowerCase();
+    const rawStageText = (rawStage ?? "").trim().toLowerCase();
+
+    const isPendingPolicy =
+      statusText.includes("pending") ||
+      stageText.includes("pending") ||
+      rawStageText.includes("pending");
+
+    if (isPendingPolicy) {
+      onToggleWorkflow("carrier_requirements");
+      return;
+    }
+
+    onOpenPolicyStatusAlert();
+  };
+
   const getVerificationValue = (field: string) => {
     const item = verificationItems.find((it) => typeof it.field_name === "string" && it.field_name === field) as
       | Record<string, unknown>
@@ -281,10 +305,7 @@ export function PolicyCard({
               type="button"
               variant="outline"
               size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenPolicyStatusAlert();
-              }}
+              onClick={handleCarrierRequirementsClick}
               className={expandedWorkflowKey === policy.key && activeWorkflowType === "carrier_requirements" ? "border-primary bg-primary/10" : ""}
             >
               Carrier Req.
@@ -320,4 +341,3 @@ export function PolicyCard({
     </div>
   );
 }
-
