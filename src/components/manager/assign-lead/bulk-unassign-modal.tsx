@@ -249,50 +249,25 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
 
     setDeleting(true);
     try {
-      // Build deal -> phone map for VICIdial cleanup
-      const dealIds = Array.from(
-        new Set(
-          assignedRows
-            .map((r) => (typeof r.deal_id === "number" ? r.deal_id : null))
-            .filter((v): v is number => v != null),
-        ),
-      );
-      const phoneByDealId = new Map<number, string | null>();
-      if (dealIds.length > 0) {
-        for (const dBatch of chunk(dealIds, 1000)) {
-          const { data: deals, error: dealsErr } = await supabase
-            .from("monday_com_deals")
-            .select("id, phone_number")
-            .in("id", dBatch);
-          if (dealsErr) throw dealsErr;
-          for (const d of (deals ?? []) as Array<{ id: number; phone_number?: string | null }>) {
-            phoneByDealId.set(d.id, d.phone_number ?? null);
-          }
-        }
-      }
-
-      // Best-effort VICIdial cleanup per assignment row, executed in parallel with a cap.
+      // Best-effort CloudTalk cleanup per assignment row, executed in parallel with a cap.
       await runWithConcurrency(assignedRows, VICIDIAL_UNASSIGN_MAX_PARALLEL, async (row) => {
         try {
-          const response = await fetch("/api/vicidial/unassign-lead", {
+          const response = await fetch("/api/cloudtalk/contact/delete", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              assignment_id: row.id,
-              agent_profile_id: row.assignee_profile_id ?? undefined,
               deal_id: row.deal_id ?? undefined,
-              phone_number: row.deal_id ? phoneByDealId.get(row.deal_id) ?? undefined : undefined,
             }),
           });
 
           if (!response.ok) {
-            console.warn("[VICIdial] Bulk unassign cleanup warning: non-2xx response", {
+            console.warn("[CloudTalk] Bulk unassign cleanup warning: non-2xx response", {
               assignmentId: row.id,
               status: response.status,
             });
           }
         } catch (cleanupErr) {
-          console.warn("[VICIdial] Bulk unassign cleanup warning:", cleanupErr);
+          console.warn("[CloudTalk] Bulk unassign cleanup warning:", cleanupErr);
         }
       });
 

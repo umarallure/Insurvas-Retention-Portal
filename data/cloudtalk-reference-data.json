@@ -1,0 +1,339 @@
+{
+  "generated_at": "2026-03-18T21:39:35.115Z",
+  "cloudtalk": {
+    "tags": [
+      {
+        "cloudtalk_tag_id": "1156535",
+        "name": "new",
+        "color": null
+      },
+      {
+        "cloudtalk_tag_id": "1165578",
+        "name": "usamatest",
+        "color": null
+      },
+      {
+        "cloudtalk_tag_id": "1165830",
+        "name": "testing compaign",
+        "color": null
+      },
+      {
+        "cloudtalk_tag_id": "1165840",
+        "name": "test1",
+        "color": null
+      },
+      {
+        "cloudtalk_tag_id": "1463132",
+        "name": "hussain-tag",
+        "color": null
+      },
+      {
+        "cloudtalk_tag_id": "1463212",
+        "name": "justine-tag",
+        "color": null
+      },
+      {
+        "cloudtalk_tag_id": "1463213",
+        "name": "ahmed-tag",
+        "color": null
+      },
+      {
+        "cloudtalk_tag_id": "1463215",
+        "name": "vesa-tag",
+        "color": null
+      },
+      {
+        "cloudtalk_tag_id": "1463216",
+        "name": "vele-tag",
+        "color": null
+      },
+      {
+        "cloudtalk_tag_id": "1463217",
+        "name": "rinor-tag",
+        "color": null
+      },
+      {
+        "cloudtalk_tag_id": "1463218",
+        "name": "suela-tag",
+        "color": null
+      }
+    ],
+    "campaigns": [
+      {
+        "cloudtalk_campaign_id": "293599",
+        "name": "Retention Parallel Dialer",
+        "status": "active",
+        "tags": [
+          {
+            "id": "1165830",
+            "name": "testing compaign"
+          }
+        ],
+        "agents": []
+      },
+      {
+        "cloudtalk_campaign_id": "293641",
+        "name": "le beta",
+        "status": "active",
+        "tags": [
+          {
+            "id": "1165830",
+            "name": "testing compaign"
+          }
+        ],
+        "agents": []
+      },
+      {
+        "cloudtalk_campaign_id": "305900",
+        "name": "hussain-campaign",
+        "status": "active",
+        "tags": [
+          {
+            "id": "1463132",
+            "name": "hussain-tag"
+          }
+        ],
+        "agents": [
+          {
+            "id": "546145",
+            "fullname": "waleed shoaib"
+          }
+        ]
+      },
+      {
+        "cloudtalk_campaign_id": "305905",
+        "name": "justine-campaign",
+        "status": "active",
+        "tags": [
+          {
+            "id": "1463212",
+            "name": "justine-tag"
+          }
+        ],
+        "agents": [
+          {
+            "id": "546135",
+            "fullname": "Justine  Caing"
+          }
+        ]
+      },
+      {
+        "cloudtalk_campaign_id": "305906",
+        "name": "ahmed-campaign",
+        "status": "active",
+        "tags": [
+          {
+            "id": "1463213",
+            "name": "ahmed-tag"
+          }
+        ],
+        "agents": [
+          {
+            "id": "546136",
+            "fullname": "Muhammad Ahmed"
+          }
+        ]
+      },
+      {
+        "cloudtalk_campaign_id": "305907",
+        "name": "vesa-campaign",
+        "status": "active",
+        "tags": [
+          {
+            "id": "1463215",
+            "name": "vesa-tag"
+          }
+        ],
+        "agents": [
+          {
+            "id": "546137",
+            "fullname": "Vesa Ramadani"
+          }
+        ]
+      },
+      {
+        "cloudtalk_campaign_id": "305908",
+        "name": "vele-campaign",
+        "status": "active",
+        "tags": [
+          {
+            "id": "1463216",
+            "name": "vele-tag"
+          }
+        ],
+        "agents": [
+          {
+            "id": "546138",
+            "fullname": "Vele Smilevski"
+          }
+        ]
+      },
+      {
+        "cloudtalk_campaign_id": "305909",
+        "name": "rinor-campaign",
+        "status": "active",
+        "tags": [],
+        "agents": [
+          {
+            "id": "546139",
+            "fullname": "Rinor Mehmeti"
+          }
+        ]
+      },
+      {
+        "cloudtalk_campaign_id": "305910",
+        "name": "suela-campaign",
+        "status": "active",
+        "tags": [],
+        "agents": [
+          {
+            "id": "546140",
+            "fullname": "Suela Gashi"
+          }
+        ]
+      }
+    ],
+    "agents": [
+      {
+        "cloudtalk_agent_id": "546115",
+        "fullname": null,
+        "email": "benjamin.w@unlimitedinsurance.io",
+        "active": null,
+        "groups": [],
+        "numbers": [],
+        "normalized_name": "",
+        "matched_retention_agents": []
+      },
+      {
+        "cloudtalk_agent_id": "546134",
+        "fullname": null,
+        "email": "hussain.k@unlimitedinsurance.io",
+        "active": null,
+        "groups": [],
+        "numbers": [],
+        "normalized_name": "",
+        "matched_retention_agents": []
+      },
+      {
+        "cloudtalk_agent_id": "546135",
+        "fullname": null,
+        "email": "justine.c@unlimitedinsurance.io",
+        "active": null,
+        "groups": [],
+        "numbers": [],
+        "normalized_name": "",
+        "matched_retention_agents": []
+      },
+      {
+        "cloudtalk_agent_id": "546136",
+        "fullname": null,
+        "email": "Muhammad.a@unlimitedinsurance.io",
+        "active": null,
+        "groups": [],
+        "numbers": [],
+        "normalized_name": "",
+        "matched_retention_agents": []
+      },
+      {
+        "cloudtalk_agent_id": "546137",
+        "fullname": null,
+        "email": "vesa.r@unlimitedinsurance.io",
+        "active": null,
+        "groups": [],
+        "numbers": [],
+        "normalized_name": "",
+        "matched_retention_agents": []
+      },
+      {
+        "cloudtalk_agent_id": "546138",
+        "fullname": null,
+        "email": "vele.s@unlimitedinsurance.io",
+        "active": null,
+        "groups": [],
+        "numbers": [],
+        "normalized_name": "",
+        "matched_retention_agents": []
+      },
+      {
+        "cloudtalk_agent_id": "546139",
+        "fullname": null,
+        "email": "Rinor.m@unlimitedinsurance.io",
+        "active": null,
+        "groups": [],
+        "numbers": [],
+        "normalized_name": "",
+        "matched_retention_agents": []
+      },
+      {
+        "cloudtalk_agent_id": "546140",
+        "fullname": null,
+        "email": "Suela.g@unlimitedinsurance.io",
+        "active": null,
+        "groups": [],
+        "numbers": [],
+        "normalized_name": "",
+        "matched_retention_agents": []
+      },
+      {
+        "cloudtalk_agent_id": "546145",
+        "fullname": null,
+        "email": "waleed.b@unlimitedinsurance.io",
+        "active": null,
+        "groups": [],
+        "numbers": [],
+        "normalized_name": "",
+        "matched_retention_agents": []
+      }
+    ]
+  },
+  "retention_agents": [
+    {
+      "retention_profile_id": "1cda9534-ffb8-466b-bfaa-85b372cf7c01",
+      "display_name": "Hussain Khan",
+      "agent_code": "hussaink001",
+      "user_id": "c631ede0-3946-47f6-b728-a15bb38fc7fa"
+    },
+    {
+      "retention_profile_id": "5f5a7aa1-32b0-42e3-aee8-15e95ff79b72",
+      "display_name": "Muhammad Ahmed",
+      "agent_code": "Ahmed001",
+      "user_id": "78d8d9a9-ef3f-4d49-9e74-b58dd62c4ff0"
+    },
+    {
+      "retention_profile_id": "61d6864f-38e8-4ac7-967c-bc92573d1dc3",
+      "display_name": "Vele Smilevski",
+      "agent_code": "VELE",
+      "user_id": "65e6ff7c-224e-4204-98d2-653fdb0c97bf"
+    },
+    {
+      "retention_profile_id": "84e39d87-aef7-48e6-a92f-0b4761c3d17d",
+      "display_name": "Suela Gashi",
+      "agent_code": "SUELA",
+      "user_id": "76efe388-c070-4170-8fa7-2572ed7df1d0"
+    },
+    {
+      "retention_profile_id": "9c614e9f-d829-46ad-91ca-38691b1c8919",
+      "display_name": "Rinor Mehmeti",
+      "agent_code": "RINOR123",
+      "user_id": "53ca92dc-a965-416a-a3e4-2871e2f2683c"
+    },
+    {
+      "retention_profile_id": "b772a62d-918b-4153-98bc-c138889c2532",
+      "display_name": "Justine",
+      "agent_code": "Jus001",
+      "user_id": "5c2822bb-225d-4fbc-8d3f-92f9c2562eac"
+    },
+    {
+      "retention_profile_id": "b9fcae3a-3653-4ab9-ab86-49dd8c9399ad",
+      "display_name": "Qasim Raja",
+      "agent_code": "qasimk001",
+      "user_id": "d3ee44f1-5d2d-4702-a230-330cfdccafee"
+    },
+    {
+      "retention_profile_id": "d8bca144-dadd-400e-8c30-26634f918a54",
+      "display_name": "Vesa Ramadani",
+      "agent_code": "VESA",
+      "user_id": "75a83378-a384-40b6-9bfb-6d4fedfeb8b9"
+    }
+  ]
+}

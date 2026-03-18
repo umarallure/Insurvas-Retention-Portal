@@ -1,0 +1,63 @@
+{
+  "generated_at": "2026-03-18T21:42:23.359Z",
+  "include_inactive": true,
+  "count": 8,
+  "retention_agents": [
+    {
+      "retention_profile_id": "1cda9534-ffb8-466b-bfaa-85b372cf7c01",
+      "active": true,
+      "display_name": "Hussain Khan",
+      "agent_code": "hussaink001",
+      "user_id": "c631ede0-3946-47f6-b728-a15bb38fc7fa"
+    },
+    {
+      "retention_profile_id": "5f5a7aa1-32b0-42e3-aee8-15e95ff79b72",
+      "active": true,
+      "display_name": "Muhammad Ahmed",
+      "agent_code": "Ahmed001",
+      "user_id": "78d8d9a9-ef3f-4d49-9e74-b58dd62c4ff0"
+    },
+    {
+      "retention_profile_id": "61d6864f-38e8-4ac7-967c-bc92573d1dc3",
+      "active": true,
+      "display_name": "Vele Smilevski",
+      "agent_code": "VELE",
+      "user_id": "65e6ff7c-224e-4204-98d2-653fdb0c97bf"
+    },
+    {
+      "retention_profile_id": "84e39d87-aef7-48e6-a92f-0b4761c3d17d",
+      "active": true,
+      "display_name": "Suela Gashi",
+      "agent_code": "SUELA",
+      "user_id": "76efe388-c070-4170-8fa7-2572ed7df1d0"
+    },
+    {
+      "retention_profile_id": "9c614e9f-d829-46ad-91ca-38691b1c8919",
+      "active": true,
+      "display_name": "Rinor Mehmeti",
+      "agent_code": "RINOR123",
+      "user_id": "53ca92dc-a965-416a-a3e4-2871e2f2683c"
+    },
+    {
+      "retention_profile_id": "b772a62d-918b-4153-98bc-c138889c2532",
+      "active": true,
+      "display_name": "Justine",
+      "agent_code": "Jus001",
+      "user_id": "5c2822bb-225d-4fbc-8d3f-92f9c2562eac"
+    },
+    {
+      "retention_profile_id": "b9fcae3a-3653-4ab9-ab86-49dd8c9399ad",
+      "active": true,
+      "display_name": "Qasim Raja",
+      "agent_code": "qasimk001",
+      "user_id": "d3ee44f1-5d2d-4702-a230-330cfdccafee"
+    },
+    {
+      "retention_profile_id": "d8bca144-dadd-400e-8c30-26634f918a54",
+      "active": true,
+      "display_name": "Vesa Ramadani",
+      "agent_code": "VESA",
+      "user_id": "75a83378-a384-40b6-9bfb-6d4fedfeb8b9"
+    }
+  ]
+}

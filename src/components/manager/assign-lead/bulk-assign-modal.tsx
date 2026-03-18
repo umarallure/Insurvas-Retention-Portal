@@ -574,21 +574,14 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
         let attempt = 0;
         let success = false;
         let lastError: unknown = null;
-        const insertedAssignmentIdByDealId = new Map<number, string>();
 
         while (attempt < MAX_RETRIES && !success) {
           attempt += 1;
-          const { data: insertedRows, error } = await supabase
+          const { error } = await supabase
             .from("retention_assigned_leads")
-            .insert(payload)
-            .select("id, deal_id");
+            .insert(payload);
           if (!error) {
             success = true;
-            for (const row of (insertedRows ?? []) as Array<{ id?: unknown; deal_id?: unknown }>) {
-              const id = typeof row?.id === "string" ? row.id : null;
-              const dealId = typeof row?.deal_id === "number" ? row.deal_id : null;
-              if (id && dealId != null) insertedAssignmentIdByDealId.set(dealId, id);
-            }
             assignedSoFar += payload.length;
             setAssignProgress({ total: plan.length, done: assignedSoFar });
           } else {
@@ -603,7 +596,7 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
           throw lastError;
         }
 
-        // Sync contacts to VICIdial (non-blocking, in background)
+        // Sync contacts to CloudTalk (non-blocking, in background)
         // Get phone numbers and names for this batch
         const batchDealIds = batch.map((p) => p.deal_id);
         const batchIdentities = batchDealIds
@@ -611,32 +604,28 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
             const identity = identityById.get(dealId);
             const assignee = finalAssignments.get(dealId);
             if (!identity || !assignee) return null;
-            const assignmentId = insertedAssignmentIdByDealId.get(dealId) ?? null;
-            return { identity, assignee, assignmentId };
+            return { identity, assignee };
           })
-          .filter((v): v is { identity: DealIdentityRow; assignee: string; assignmentId: string | null } => !!v);
+          .filter((v): v is { identity: DealIdentityRow; assignee: string } => !!v);
 
-        // Add to VICIdial in parallel (don't await - fire and forget)
-        for (const { identity, assignee, assignmentId } of batchIdentities) {
+        // Add to CloudTalk in parallel (don't await - fire and forget)
+        for (const { identity, assignee } of batchIdentities) {
           if (identity.phone_number && identity.phone_number.trim()) {
             const fullName = identity.ghl_name || identity.deal_name || "";
             // Fire and forget - don't block assignment
-            fetch("/api/vicidial/add-lead", {
+            fetch("/api/cloudtalk/contact/add", {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
-                assignment_id: assignmentId ?? undefined,
                 phone_number: identity.phone_number,
                 full_name: fullName,
                 agent_profile_id: assignee,
                 deal_id: identity.id,
-                vendor_lead_code: identity.id,
-                comments: "Bulk assigned from Retention Portal",
               }),
             }).catch((err) => {
-              console.warn("[VICIdial] Failed to sync lead in bulk:", err);
+              console.warn("[CloudTalk] Failed to sync lead in bulk:", err);
             });
           }
         }

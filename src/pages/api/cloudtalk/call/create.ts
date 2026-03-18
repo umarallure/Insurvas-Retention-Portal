@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
+import { getCloudTalkConfigForProfile } from "@/lib/cloudtalk/contact";
 
 type CloudTalkCallResponse = {
   responseData: {
@@ -10,6 +11,12 @@ type CloudTalkCallResponse = {
 type ErrorResponse = {
   error: string;
   message?: string;
+};
+
+type CloudTalkCallRequest = {
+  callee_number?: string;
+  agent_profile_id?: string;
+  retention_id?: string;
 };
 
 export default async function handler(
@@ -24,7 +31,6 @@ export default async function handler(
   // Get credentials from environment variables (server-side only)
   const accountId = process.env.NEXT_PUBLIC_CLOUDTALK_ACCOUNT_ID;
   const apiSecret = process.env.NEXT_PUBLIC_CLOUDTALK_API_SECRET;
-  const defaultAgentId = process.env.NEXT_PUBLIC_CLOUDTALK_AGENT_ID || "530325";
 
   if (!accountId || !apiSecret) {
     return res.status(500).json({
@@ -34,7 +40,7 @@ export default async function handler(
   }
 
   // Get request body
-  const { callee_number, agent_id } = req.body;
+  const { callee_number, agent_profile_id, retention_id } = (req.body ?? {}) as CloudTalkCallRequest;
 
   if (!callee_number) {
     return res.status(400).json({
@@ -43,10 +49,23 @@ export default async function handler(
     });
   }
 
-  // Use provided agent_id or default
-  const agentId = agent_id || defaultAgentId;
-
   try {
+    const retentionId = retention_id?.trim() || agent_profile_id?.trim() || "";
+    if (!retentionId) {
+      return res.status(400).json({
+        error: "Missing required field",
+        message: "retention_id or agent_profile_id is required",
+      });
+    }
+
+    const mappedConfig = await getCloudTalkConfigForProfile(retentionId);
+    if (!mappedConfig) {
+      return res.status(404).json({
+        error: "CloudTalk mapping not found",
+        message: `No active CloudTalk mapping found for retention/profile id ${retentionId}`,
+      });
+    }
+
     // Create Basic Auth header
     const authString = `${accountId}:${apiSecret}`;
     const base64Auth = Buffer.from(authString).toString("base64");
@@ -59,7 +78,7 @@ export default async function handler(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        agent_id: parseInt(agentId, 10),
+        agent_id: parseInt(mappedConfig.agentId, 10),
         callee_number: callee_number,
       }),
     });
@@ -76,5 +95,3 @@ export default async function handler(
     });
   }
 }
-
-
