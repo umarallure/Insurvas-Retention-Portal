@@ -1,6 +1,16 @@
 {
   "entries": [
     {
+      "assignmentId": "9561debf-c92d-4fc1-84a0-e4211db982ef",
+      "dealId": "50557",
+      "phoneNumber": "4142481146",
+      "listId": "2001",
+      "agentProfileId": "1cda9534-ffb8-466b-bfaa-85b372cf7c01",
+      "vendorLeadCode": "50557",
+      "vicidialLeadId": 3566,
+      "updatedAt": "2026-03-18T19:38:10.247Z"
+    },
+    {
       "assignmentId": "4f4a6bfa-afc2-4ef1-ab25-a82d48e73964",
       "dealId": "50035",
       "phoneNumber": "6626814525",

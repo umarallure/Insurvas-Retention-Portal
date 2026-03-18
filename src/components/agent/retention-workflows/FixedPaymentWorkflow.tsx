@@ -507,36 +507,33 @@ export function FixedPaymentWorkflow({ deal, leadInfo, lead, retentionAgent, onC
 
             if (activeAssignment?.id) {
               try {
-                const vicidialResponse = await fetch("/api/vicidial/unassign-lead", {
+                const cloudTalkResponse = await fetch("/api/cloudtalk/contact/delete", {
                   method: "POST",
                   headers: {
                     "Content-Type": "application/json",
                   },
                   body: JSON.stringify({
-                    assignment_id: activeAssignment.id,
-                    agent_profile_id: profile.id,
                     deal_id: deal.dealId,
-                    phone_number: getString(lead, "phone_number") ?? deal.phoneNumber ?? undefined,
                   }),
                 });
 
-                const vicidialPayload = (await vicidialResponse.json().catch(() => null)) as
-                  | { ok?: boolean; error?: string; details?: string }
+                const cloudTalkPayload = (await cloudTalkResponse.json().catch(() => null)) as
+                  | { success?: boolean; error?: string }
                   | null;
 
-                if (!vicidialResponse.ok || vicidialPayload?.ok === false) {
-                  console.warn("[fixed-payment] VICIdial unassign failed after handled update", {
+                if (!cloudTalkResponse.ok || cloudTalkPayload?.success === false) {
+                  console.warn("[fixed-payment] CloudTalk unassign failed after handled update", {
                     dealId: deal.dealId,
                     assignmentId: activeAssignment.id,
-                    responseStatus: vicidialResponse.status,
-                    payload: vicidialPayload,
+                    responseStatus: cloudTalkResponse.status,
+                    payload: cloudTalkPayload,
                   });
                 }
-              } catch (vicidialError) {
-                console.warn("[fixed-payment] VICIdial unassign request failed after handled update", {
+              } catch (cloudTalkError) {
+                console.warn("[fixed-payment] CloudTalk unassign request failed after handled update", {
                   dealId: deal.dealId,
                   assignmentId: activeAssignment.id,
-                  error: vicidialError,
+                  error: cloudTalkError,
                 });
               }
             }

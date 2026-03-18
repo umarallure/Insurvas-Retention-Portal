@@ -1,31 +1,30 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { useAccess } from "@/components/access-context";
 
 type CloudTalkCallResponse = {
-  ok?: boolean;
-  status?: number;
-  raw?: string;
-  parsed?: Record<string, string>;
-  error?: string;
-  message?: string;
+  responseData: {
+    status: number;
+    message: string;
+  };
 };
 
 export function useCloudTalk() {
+  const { access } = useAccess();
   const [isCalling, setIsCalling] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastStatus, setLastStatus] = useState<string | null>(null);
-  const defaultAgentUser = process.env.NEXT_PUBLIC_VICIDIAL_AGENT_USER || "";
 
-  const dialNumber = useCallback(async (phoneNumber: string, agentUserOverride?: string) => {
+  const dialNumber = useCallback(async (phoneNumber: string) => {
     const phone = phoneNumber.trim();
     if (!phone) {
       setLastError("Enter a phone number");
       return;
     }
-    const agentUser = agentUserOverride || defaultAgentUser;
-    if (!agentUser) {
-      setLastError("Missing VICIdial agent user (NEXT_PUBLIC_VICIDIAL_AGENT_USER)");
+    const retentionId = access.profileId?.trim() || "";
+    if (!retentionId) {
+      setLastError("Missing retention profile id");
       return;
     }
 
@@ -34,30 +33,45 @@ export function useCloudTalk() {
     setLastStatus(null);
 
     try {
-      const response = await fetch("/api/vicidial/dial", {
+      const response = await fetch("/api/cloudtalk/call/create", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          phone_number: phone,
-          agent_user: agentUser,
+          callee_number: phone,
+          retention_id: retentionId,
         }),
       });
 
-      const data = (await response.json()) as CloudTalkCallResponse;
+      const data = (await response.json()) as CloudTalkCallResponse | { error: string; message?: string };
 
       setIsCalling(false);
 
-      if (!response.ok || data.ok === false || data.error) {
+      if ("error" in data) {
         setLastError(data.message || data.error || "Failed to initiate call");
         setLastStatus(null);
         return false;
       }
 
-      setLastStatus("Call request sent to VICIdial");
-      setLastError(null);
-      return true;
+      if (data.responseData.status === 200) {
+        setLastStatus("Call initiated successfully");
+        setLastError(null);
+        return true;
+      }
+
+      let errorMessage = data.responseData.message || "Failed to initiate call";
+      if (data.responseData.status === 403) {
+        errorMessage = "Agent is not online. Please log into CloudTalk.";
+      } else if (data.responseData.status === 409) {
+        errorMessage = "Agent is already on a call. Please wait.";
+      } else if (data.responseData.status === 406) {
+        errorMessage = "Invalid phone number or agent configuration.";
+      }
+
+      setLastError(errorMessage);
+      setLastStatus(null);
+      return false;
     } catch (error) {
       setIsCalling(false);
       const errorMessage = error instanceof Error ? error.message : "Network error";
@@ -65,10 +79,10 @@ export function useCloudTalk() {
       setLastStatus(null);
       return false;
     }
-  }, [defaultAgentUser]);
+  }, [access.profileId]);
 
-  const ready = true;
-  const loggedIn = true;
+  const ready = !access.loading && Boolean(access.profileId);
+  const loggedIn = ready;
 
   return {
     ready,
