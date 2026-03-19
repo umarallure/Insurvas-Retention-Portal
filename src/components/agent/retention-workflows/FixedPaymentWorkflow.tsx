@@ -205,12 +205,16 @@ export function FixedPaymentWorkflow({ deal, leadInfo, lead, retentionAgent, onC
       return;
     }
 
+    let accessToken: string | null = null;
+
     // Verify that this deal is assigned to the current agent
     if (deal.dealId) {
       try {
         const {
           data: { session },
         } = await supabase.auth.getSession();
+
+        accessToken = session?.access_token ?? null;
 
         if (!session?.user) {
           toast({ 
@@ -474,6 +478,67 @@ export function FixedPaymentWorkflow({ deal, leadInfo, lead, retentionAgent, onC
         );
 
       if (ddfError) throw ddfError;
+
+      if (!accessToken) {
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
+
+        if (sessionError) throw sessionError;
+        accessToken = session?.access_token ?? null;
+      }
+
+      if (!accessToken) {
+        throw new Error("Not authenticated.");
+      }
+
+      const notificationResponse = await fetch("/api/retention-call-notification", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          type: "buffer_connected",
+          leadId: getString(lead, "id"),
+          dealId: deal.dealId,
+          policyNumber: typeof finalPolicyNumber === "string" ? finalPolicyNumber : null,
+          callCenter: finalLeadVendor,
+          retentionAgent,
+          customerName: getString(lead, "customer_full_name") ?? deal.clientName,
+          retentionType: "fixed_payment",
+          retentionNotes: shortFormNotes,
+          quoteDetails: {
+            carrier: typeof finalCarrier === "string" ? finalCarrier : null,
+            product: typeof finalProductType === "string" ? finalProductType : null,
+            coverage: finalFaceAmount != null ? String(finalFaceAmount) : null,
+            monthlyPremium: finalMonthlyPremium != null ? String(finalMonthlyPremium) : null,
+            draftDate: finalDraftDate,
+            bankName,
+            routingNumber,
+            accountNumber,
+            accountType,
+            accountHolderName,
+            policyStatus,
+            mohFixType: mohFixType || null,
+            shortFormStatus,
+          },
+        }),
+      });
+
+      const notificationPayload = (await notificationResponse.json().catch(() => null)) as
+        | { ok: true }
+        | { ok: false; error: string }
+        | null;
+
+      if (!notificationResponse.ok || !notificationPayload || ("ok" in notificationPayload && notificationPayload.ok === false)) {
+        throw new Error(
+          notificationPayload && "error" in notificationPayload
+            ? notificationPayload.error
+            : `Notification failed (${notificationResponse.status})`,
+        );
+      }
 
       // Mark the assigned lead as handled
       if (deal.dealId) {

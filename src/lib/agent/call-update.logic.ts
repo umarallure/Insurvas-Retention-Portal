@@ -402,43 +402,55 @@ export function useCallUpdate() {
       try {
         const leadIdLocal = lead["id"] as string;
         const callCenterParam = callCenterFromRoute.trim().length ? callCenterFromRoute.trim() : getString(lead, "lead_vendor");
+        const {
+          data: { session: authSession },
+          error: authErr,
+        } = await supabase.auth.getSession();
 
-        const { data: sessionRow, error: sessionErr } = await supabase.rpc(
-          "retention_get_or_create_verification_session",
-          {
-            lead_id_param: leadIdLocal,
-            policy_number_param: policyNumber,
-            call_center_param: callCenterParam,
+        if (authErr) throw authErr;
+        const token = authSession?.access_token;
+        if (!token) throw new Error("Not authenticated.");
+
+        const resp = await fetch("/api/verification-items", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
           },
-        );
+          body: JSON.stringify({
+            leadId: leadIdLocal,
+            policyKey: policyNumber,
+            callCenter: callCenterParam,
+          }),
+        });
 
-        if (sessionErr) throw sessionErr;
-        const session = sessionRow as unknown as Record<string, unknown> | null;
-        const sessionId = session && typeof session["id"] === "string" ? (session["id"] as string) : null;
-        if (!sessionId) throw new Error("Failed to create or load verification session.");
+        const json = (await resp.json().catch(() => null)) as
+          | { ok: true; sessionId: string; items: Array<Record<string, unknown>> }
+          | { ok: false; error: string }
+          | null;
+
+        if (!resp.ok || !json || ("ok" in json && json.ok === false)) {
+          const errMsg = json && "error" in json ? json.error : `Failed to load verification items (status ${resp.status}).`;
+          throw new Error(errMsg);
+        }
+
+        const sessionId = (json as { ok: true; sessionId: string }).sessionId;
+        const itemsRows = (json as { ok: true; items: Array<Record<string, unknown>> }).items;
 
         const { data: sessionDbRow, error: sessionDbErr } = await supabase
-          .from("retention_verification_sessions")
+          .from("verification_sessions")
           .select("*")
           .eq("id", sessionId)
           .maybeSingle();
 
         if (sessionDbErr) throw sessionDbErr;
 
-        const { data: itemsRows, error: itemsErr } = await supabase
-          .from("retention_verification_items")
-          .select("*")
-          .eq("session_id", sessionId)
-          .order("created_at", { ascending: true });
-
-        if (itemsErr) throw itemsErr;
-
         if (cancelled) return;
 
         const rows = sortVerificationItems((itemsRows ?? []) as Array<Record<string, unknown>>);
         
         setVerificationSessionId(sessionId);
-        setVerificationSession(((sessionDbRow ?? null) as RetentionVerificationSessionRow | null) ?? session);
+        setVerificationSession((sessionDbRow ?? null) as RetentionVerificationSessionRow | null);
         setVerificationItems(rows);
 
         const map: Record<string, string> = {};
@@ -536,7 +548,7 @@ export function useCallUpdate() {
     );
 
     const { error: updateErr } = await supabase
-      .from("retention_verification_items")
+      .from("verification_items")
       .update({ 
         is_verified: checked, 
         verified_at: checked ? new Date().toISOString() : null,
@@ -559,7 +571,7 @@ export function useCallUpdate() {
     );
 
     const { error: updateErr } = await supabase
-      .from("retention_verification_items")
+      .from("verification_items")
       .update({ verified_value: value, is_modified: isModified })
       .eq("id", itemId);
 

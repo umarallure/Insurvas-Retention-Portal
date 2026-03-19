@@ -33,6 +33,7 @@ type PolicyCardProps = {
   lead: { id?: string } | null;
   selectedDeal: { monday_item_id?: string | null; ghl_stage?: string | null } | null;
   retentionAgent: string;
+  verificationSessionId: string | null;
   verificationItems: Array<Record<string, unknown>>;
   verificationInputValues: Record<string, string>;
   personalSsnLast4: string;
@@ -53,6 +54,7 @@ export function PolicyCard({
   lead,
   selectedDeal,
   retentionAgent,
+  verificationSessionId,
   verificationItems,
   verificationInputValues,
   personalSsnLast4,
@@ -321,6 +323,8 @@ export function PolicyCard({
                   policyNumber={policy.policyNumber ?? null}
                   callCenter={policy.callCenter ?? null}
                   retentionAgent={retentionAgent}
+                  verificationSessionId={verificationSessionId}
+                  customerName={policy.clientName}
                   onCancel={onCancelWorkflow}
                 />
               ) : activeWorkflowType === "fixed_payment" ? (

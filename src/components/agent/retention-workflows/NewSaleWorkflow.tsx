@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/router";
+import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/lib/supabase";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +27,8 @@ type NewSaleWorkflowProps = {
   policyNumber: string | null;
   callCenter: string | null;
   retentionAgent: string;
+  verificationSessionId: string | null;
+  customerName: string | null;
   onCancel: () => void;
 };
 
@@ -35,9 +38,11 @@ export function NewSaleWorkflow({
   policyNumber,
   callCenter,
   retentionAgent,
+  verificationSessionId,
+  customerName,
   onCancel,
 }: NewSaleWorkflowProps) {
-  const router = useRouter();
+  const { toast } = useToast();
 
   const [quoteCarrier, setQuoteCarrier] = React.useState("");
   const [quoteProduct, setQuoteProduct] = React.useState("");
@@ -45,17 +50,79 @@ export function NewSaleWorkflow({
   const [quotePremium, setQuotePremium] = React.useState("");
   const [quoteNotes, setQuoteNotes] = React.useState("");
   const [draftDate, setDraftDate] = React.useState("");
+  const [submitting, setSubmitting] = React.useState(false);
 
-  const handleGoToCallUpdate = async () => {
-    if (!leadId || !policyNumber) return;
+  const handleSubmit = async () => {
+    if (!leadId || !policyNumber) {
+      toast({
+        title: "Missing lead data",
+        description: "Lead and policy are required before submitting this handoff.",
+        variant: "destructive",
+      });
+      return;
+    }
 
-    await router.push(
-      `/agent/call-update?leadId=${encodeURIComponent(leadId)}&policyNumber=${encodeURIComponent(
-        policyNumber,
-      )}&dealId=${encodeURIComponent(String(dealId ?? ""))}&callCenter=${encodeURIComponent(
-        callCenter ?? "",
-      )}&retentionAgent=${encodeURIComponent(retentionAgent)}&retentionType=new_sale&draftDate=${encodeURIComponent(draftDate)}`,
-    );
+    setSubmitting(true);
+    try {
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError) throw sessionError;
+      if (!session?.access_token) throw new Error("Not authenticated.");
+
+      const response = await fetch("/api/retention-call-notification", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          type: "buffer_connected",
+          leadId,
+          dealId,
+          policyNumber,
+          callCenter,
+          retentionAgent,
+          verificationSessionId,
+          customerName,
+          retentionType: "new_sale",
+          retentionNotes: quoteNotes,
+          quoteDetails: {
+            carrier: quoteCarrier,
+            product: quoteProduct,
+            coverage: quoteCoverage,
+            monthlyPremium: quotePremium,
+            draftDate,
+          },
+        }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as
+        | { ok: true }
+        | { ok: false; error: string }
+        | null;
+
+      if (!response.ok || !payload || ("ok" in payload && payload.ok === false)) {
+        throw new Error(payload && "error" in payload ? payload.error : `Submit failed (${response.status})`);
+      }
+
+      toast({
+        title: "Submitted",
+        description: "The licensed agent handoff has been sent.",
+        variant: "success",
+      });
+      onCancel();
+    } catch (error) {
+      toast({
+        title: "Submit failed",
+        description: error instanceof Error ? error.message : "Failed to submit handoff.",
+        variant: "destructive",
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -114,8 +181,8 @@ export function NewSaleWorkflow({
         <Button variant="outline" onClick={onCancel} className="flex-1">
           Cancel
         </Button>
-        <Button onClick={() => void handleGoToCallUpdate()} className="flex-1">
-          Go to Call Update
+        <Button onClick={() => void handleSubmit()} className="flex-1" disabled={submitting}>
+          Submit
         </Button>
       </div>
     </div>

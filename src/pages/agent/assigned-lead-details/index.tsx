@@ -59,6 +59,7 @@ export default function AssignedLeadDetailsPage() {
     selectedPolicyView,
     verificationLoading,
     verificationError,
+    verificationSessionId,
     verificationItems,
     verificationInputValues,
     toggleVerificationItem,
@@ -254,9 +255,10 @@ export default function AssignedLeadDetailsPage() {
                                   setPendingNewSalePolicyKey(policyKey);
                                   setNewSaleConfirmOpen(true);
                                 }}
-                                                lead={lead}
+                                lead={lead}
                                 selectedDeal={selectedDeal}
-                                                retentionAgent={retentionAgent}
+                                retentionAgent={retentionAgent}
+                                verificationSessionId={verificationSessionId}
                                 verificationItems={verificationItems}
                                 verificationInputValues={verificationInputValues}
                                 personalSsnLast4={personalSsnLast4}

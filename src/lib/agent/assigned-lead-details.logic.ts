@@ -2359,7 +2359,7 @@ export function useAssignedLeadDetails() {
     );
 
     const { error: updateErr } = await supabase
-      .from("retention_verification_items")
+      .from("verification_items")
       .update({ 
         is_verified: checked, 
         verified_at: checked ? new Date().toISOString() : null,
@@ -2383,7 +2383,7 @@ export function useAssignedLeadDetails() {
     );
 
     const { error: updateErr } = await supabase
-      .from("retention_verification_items")
+      .from("verification_items")
       .update({ verified_value: value, is_modified: isModified })
       .eq("id", itemId);
 

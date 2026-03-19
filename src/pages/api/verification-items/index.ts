@@ -177,21 +177,58 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
     }
 
-    const { data: sessionRow, error: sessionErr } = await supabaseAdmin.rpc(
-      "retention_get_or_create_verification_session",
-      {
-        lead_id_param: leadId,
-        policy_number_param: policyKey,
-        call_center_param: callCenter,
-      },
-    );
+    const { data: leadRow } = await supabaseAdmin
+      .from("leads")
+      .select("submission_id")
+      .eq("id", leadId)
+      .maybeSingle();
 
-    if (sessionErr) {
-      return res.status(500).json({ ok: false, error: sessionErr.message });
+    const submissionId =
+      leadRow && typeof leadRow === "object" && leadRow !== null && "submission_id" in leadRow && typeof leadRow["submission_id"] === "string"
+        ? leadRow["submission_id"].trim()
+        : "";
+
+    if (!submissionId) {
+      return res.status(400).json({ ok: false, error: "Lead is missing submission_id" });
     }
 
-    const session = sessionRow as unknown as Record<string, unknown> | null;
-    const sessionId = session && typeof session["id"] === "string" ? (session["id"] as string) : "";
+    const { data: existingSession, error: existingSessionErr } = await supabaseAdmin
+      .from("verification_sessions")
+      .select("*")
+      .eq("submission_id", submissionId)
+      .order("updated_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingSessionErr) {
+      return res.status(500).json({ ok: false, error: existingSessionErr.message });
+    }
+
+    let session = (existingSession ?? null) as Record<string, unknown> | null;
+    let sessionId = session && typeof session["id"] === "string" ? (session["id"] as string) : "";
+
+    if (!sessionId) {
+      const sessionInsert: Record<string, unknown> = {
+        submission_id: submissionId,
+        status: "in_progress",
+        is_retention_call: true,
+      };
+
+      const { data: insertedSession, error: insertSessionErr } = await supabaseAdmin
+        .from("verification_sessions")
+        .insert(sessionInsert)
+        .select("*")
+        .maybeSingle();
+
+      if (insertSessionErr) {
+        return res.status(500).json({ ok: false, error: insertSessionErr.message });
+      }
+
+      session = (insertedSession ?? null) as Record<string, unknown> | null;
+      sessionId = session && typeof session["id"] === "string" ? (session["id"] as string) : "";
+    }
+
     if (!sessionId) {
       return res.status(500).json({ ok: false, error: "Failed to create or load verification session" });
     }
@@ -264,16 +301,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
     }
 
-    const { error: initErr } = await supabaseAdmin.rpc("retention_initialize_verification_items", {
-      session_id_param: sessionId,
-    });
-
-    if (initErr) {
-      return res.status(500).json({ ok: false, error: initErr.message });
-    }
-
     const { data: itemsRows, error: itemsErr } = await supabaseAdmin
-      .from("retention_verification_items")
+      .from("verification_items")
       .select("*")
       .eq("session_id", sessionId)
       .order("created_at", { ascending: true });
@@ -294,7 +323,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             original_value: (autofill[fieldName] ?? "").toString(),
           }));
 
-          const { error: seedErr } = await supabaseAdmin.from("retention_verification_items").insert(inserts);
+          const { error: seedErr } = await supabaseAdmin.from("verification_items").insert(inserts);
           if (seedErr) {
             console.error("[verification-items] Failed to create verification items:", seedErr);
             return res.status(500).json({ ok: false, error: seedErr.message });
@@ -316,7 +345,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             
             if (shouldUpdate) {
               const { error: updateErr } = await supabaseAdmin
-                .from("retention_verification_items")
+                .from("verification_items")
                 .update({ original_value: autofillValue })
                 .eq("id", itemId);
               
@@ -332,7 +361,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const { data: itemsRows2, error: itemsErr2 } = await supabaseAdmin
-      .from("retention_verification_items")
+      .from("verification_items")
       .select("*")
       .eq("session_id", sessionId)
       .order("created_at", { ascending: true });
