@@ -38,18 +38,12 @@ type DealLite = {
 const retentionAgentOptions = ["Aqib Afridi", "Qasim Raja", "Hussain Khan", "Ayan Ali", "Ayan Khan", "N/A"];
 
 const carrierOptions = [
-  "Liberty",
-  "SBLI",
-  "Corebridge",
-  "MOH",
-  "Transamerica",
-  "RNA",
   "AMAM",
-  "GTL",
   "Aetna",
-  "Americo",
-  "CICA",
-  "N/A",
+  "Aflac",
+  "American Home Life",
+  "Mutual of Omaha",
+  "Transamerica",
 ];
 
 const productTypeOptions = [

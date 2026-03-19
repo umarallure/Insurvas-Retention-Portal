@@ -9,7 +9,16 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
-import { carrierOptions, productTypeOptions } from "./types";
+import { productTypeOptions } from "./types";
+
+const newSaleCarrierOptions = [
+  "AMAM",
+  "Aetna",
+  "Aflac",
+  "American Home Life",
+  "Mutual of Omaha",
+  "Transamerica",
+];
 
 type NewSaleWorkflowProps = {
   leadId: string | null;
@@ -60,7 +69,7 @@ export function NewSaleWorkflow({
               <SelectValue placeholder="Select Carrier" />
             </SelectTrigger>
             <SelectContent>
-              {carrierOptions.map((c) => (
+              {newSaleCarrierOptions.map((c) => (
                 <SelectItem key={c} value={c}>
                   {c}
                 </SelectItem>
