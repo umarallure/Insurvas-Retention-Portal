@@ -16,6 +16,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/lib/supabase";
+import { Loader2, Phone } from "lucide-react";
 import { titleizeKey } from "@/lib/agent/assigned-lead-details.logic";
 
 type VerificationPanelProps = {
@@ -43,10 +46,17 @@ export function VerificationPanel({
   onToggleVerification,
   onUpdateValue,
 }: VerificationPanelProps) {
+  const { toast } = useToast();
   const [showUnderwritingModal, setShowUnderwritingModal] = React.useState(false);
   const [conditionInput, setConditionInput] = React.useState("");
   const [medicationInput, setMedicationInput] = React.useState("");
   const [toolkitUrl, setToolkitUrl] = React.useState("https://insurancetoolkits.com/login");
+  const [dncCheckingItemId, setDncCheckingItemId] = React.useState<string | null>(null);
+  const [showDncModal, setShowDncModal] = React.useState(false);
+  const [pendingPhoneVerification, setPendingPhoneVerification] = React.useState<string | null>(null);
+  const [phoneDncStatusByItem, setPhoneDncStatusByItem] = React.useState<Record<string, "clear" | "dnc" | "tcpa">>({});
+  const [phoneDncStatus, setPhoneDncStatus] = React.useState<"clear" | "dnc" | "tcpa" | null>(null);
+  const [dncMessage, setDncMessage] = React.useState<string | null>(null);
 
   const [underwritingData, setUnderwritingData] = React.useState({
     tobaccoLast12Months: "" as "yes" | "no" | "",
@@ -87,6 +97,96 @@ export function VerificationPanel({
   };
 
   const cleanMoney = (v: string) => v.replace(/\$/g, "").replace(/,/g, "").trim();
+
+  const checkDnc = async (itemId: string) => {
+    const item = verificationItems.find((i) => i.id === itemId);
+    const phoneValue =
+      verificationInputValues[itemId] ??
+      (item && typeof item.verified_value === "string" ? item.verified_value : "") ??
+      (item && typeof item.original_value === "string" ? item.original_value : "") ??
+      "";
+
+    const cleanPhone = phoneValue.replace(/\D/g, "");
+    if (!cleanPhone || cleanPhone.length < 10) {
+      toast({
+        title: "Invalid Phone Number",
+        description: "Please enter a valid phone number before checking DNC.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setDncCheckingItemId(itemId);
+    try {
+      const { data, error } = await supabase.functions.invoke("dnc-lookup", {
+        body: { mobileNumber: cleanPhone },
+      });
+
+      if (error) {
+        throw new Error(error.message || "DNC lookup failed");
+      }
+
+      const payload =
+        data && typeof data === "object" && "data" in (data as Record<string, unknown>)
+          ? ((data as Record<string, unknown>).data as Record<string, unknown> | null)
+          : (data as Record<string, unknown> | null);
+
+      const listIncludes = (value: unknown) =>
+        Array.isArray(value) && value.some((v) => typeof v === "string" && (v === cleanPhone || v.endsWith(cleanPhone.slice(-10))));
+
+      const isDnc = listIncludes(payload?.federal_dnc) || listIncludes(payload?.dnc);
+      const isTcpa = listIncludes(payload?.tcpa_litigator);
+
+      const status: "clear" | "dnc" | "tcpa" = isTcpa ? "tcpa" : isDnc ? "dnc" : "clear";
+      const message = isTcpa
+        ? "WARNING: This number is flagged as TCPA/Litigator."
+        : isDnc
+          ? "This number is on the DNC list. Proceed with verbal consent."
+          : "This number is clear. Please verify consent with the customer.";
+
+      setPhoneDncStatusByItem((prev) => ({ ...prev, [itemId]: status }));
+      setPhoneDncStatus(status);
+      setDncMessage(message);
+      setPendingPhoneVerification(itemId);
+      setShowDncModal(true);
+
+      toast({
+        title: status === "tcpa" ? "TCPA Warning" : status === "dnc" ? "DNC Warning" : "Phone Check Complete",
+        description: message,
+        variant: status === "tcpa" ? "destructive" : "default",
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Unable to check DNC status.";
+      toast({
+        title: "DNC Check Failed",
+        description: msg,
+        variant: "destructive",
+      });
+    } finally {
+      setDncCheckingItemId(null);
+    }
+  };
+
+  const handleDncModalConfirm = () => {
+    if (pendingPhoneVerification) {
+      void onToggleVerification(pendingPhoneVerification, true);
+      toast({
+        title: "Consent Verified",
+        description: "Phone number verified with customer consent.",
+      });
+    }
+    setPendingPhoneVerification(null);
+    setPhoneDncStatus(null);
+    setDncMessage(null);
+    setShowDncModal(false);
+  };
+
+  const handleDncModalCancel = () => {
+    setPendingPhoneVerification(null);
+    setPhoneDncStatus(null);
+    setDncMessage(null);
+    setShowDncModal(false);
+  };
 
   const getVerificationFieldValue = React.useCallback(
     (fieldName: string) => {
@@ -240,6 +340,26 @@ export function VerificationPanel({
                       {titleizeKey(fieldName || "Field")}
                     </div>
                     <div className="ml-auto flex items-center gap-2">
+                      {fieldName === "phone_number" ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-6 text-[11px] px-2 bg-blue-600 hover:bg-blue-700 text-white"
+                          onClick={() => void checkDnc(itemId)}
+                          disabled={dncCheckingItemId === itemId}
+                        >
+                          {dncCheckingItemId === itemId ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Phone className="h-3 w-3 mr-1" />}
+                          Check
+                        </Button>
+                      ) : null}
+                      {fieldName === "phone_number" && phoneDncStatusByItem[itemId] ? (
+                        <Badge
+                          variant={phoneDncStatusByItem[itemId] === "tcpa" ? "destructive" : phoneDncStatusByItem[itemId] === "dnc" ? "outline" : "secondary"}
+                          className="text-[10px]"
+                        >
+                          {phoneDncStatusByItem[itemId].toUpperCase()}
+                        </Badge>
+                      ) : null}
                       <div className="text-[11px] text-muted-foreground">{checked ? "Verified" : "Pending"}</div>
                       <Checkbox
                         checked={checked}
@@ -499,6 +619,52 @@ export function VerificationPanel({
                 Save & Verify All
               </Button>
             </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showDncModal} onOpenChange={setShowDncModal}>
+        <DialogContent className={phoneDncStatus === "tcpa" ? "border-red-500 max-w-2xl" : "max-w-2xl"}>
+          <DialogHeader>
+            <DialogTitle className={phoneDncStatus === "tcpa" ? "text-red-600 text-2xl" : phoneDncStatus === "dnc" ? "text-orange-600 text-2xl" : "text-blue-600 text-2xl"}>
+              {phoneDncStatus === "tcpa" ? "TCPA LITIGATOR WARNING" : phoneDncStatus === "dnc" ? "Do Not Call List" : "Phone Verification"}
+            </DialogTitle>
+            <DialogDescription className="text-base">
+              {phoneDncStatus === "tcpa"
+                ? "This number is flagged as a TCPA Litigator. Proceeding may result in legal issues."
+                : "Please read the following script to the customer to obtain verbal consent."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {phoneDncStatus === "tcpa" ? (
+            <div className="py-4">
+              <p className="text-red-600 font-bold text-center text-2xl">WARNING: This number is a TCPA LITIGATOR</p>
+              <p className="text-lg text-gray-600 text-center mt-3">This number has been flagged as a TCPA litigator. It is recommended to not proceed with this lead.</p>
+            </div>
+          ) : (
+            <div className="py-4">
+              {phoneDncStatus === "dnc" ? (
+                <p className="text-orange-600 text-lg font-bold mb-3">This number is on the Do Not Call list.</p>
+              ) : null}
+              <div className="bg-gray-50 p-6 rounded-lg border-2 border-gray-200 space-y-3">
+                <p className="text-lg font-medium">Is your phone number <span className="text-blue-600 font-bold">{pendingPhoneVerification ? verificationInputValues[pendingPhoneVerification] ?? "" : ""}</span> on the Federal, National or State Do Not Call List?</p>
+                <p className="text-gray-500 text-sm">If a customer says no and we see it is on DNC, we still need verbal consent.</p>
+                <p className="text-lg font-medium">Sir/Ma'am, even if your phone number is on the Federal National or State Do Not Call list, do we still have your permission to call you and submit your application for insurance to <span className="text-blue-600 font-bold">{getVerificationFieldValue("carrier") || selectedPolicyView?.carrier || "selected carrier"}</span> via your phone number <span className="text-blue-600 font-bold">{pendingPhoneVerification ? verificationInputValues[pendingPhoneVerification] ?? "" : ""}</span>? And do we have your permission to call you on the same phone number in the future if needed?</p>
+                <p className="text-base text-gray-600 font-semibold">Make sure you get a clear YES on it.</p>
+              </div>
+              {dncMessage ? <p className="mt-3 text-sm text-muted-foreground">{dncMessage}</p> : null}
+            </div>
+          )}
+
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={handleDncModalCancel} className="text-lg px-6 py-3">
+              Cancel
+            </Button>
+            {phoneDncStatus !== "tcpa" ? (
+              <Button onClick={handleDncModalConfirm} className="text-lg px-6 py-3 bg-green-600 hover:bg-green-700">
+                I Got Verbal Consent - Proceed
+              </Button>
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>
