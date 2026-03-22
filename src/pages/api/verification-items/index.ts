@@ -29,6 +29,55 @@ function getBearerToken(req: NextApiRequest) {
   return m?.[1] ?? null;
 }
 
+type LeadCandidateRow = {
+  id: string;
+  submission_id: string | null;
+  customer_full_name: string | null;
+  phone_number: string | null;
+  lead_vendor: string | null;
+  created_at: string | null;
+};
+
+function normalizeName(value: string | null | undefined) {
+  if (!value) return "";
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizePhoneDigits(value: string | null | undefined) {
+  if (!value) return "";
+  return value.replace(/\D/g, "");
+}
+
+function last10Digits(value: string | null | undefined) {
+  const digits = normalizePhoneDigits(value);
+  if (!digits) return "";
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+}
+
+function buildDigitWildcardPattern(digits: string) {
+  const clean = digits.replace(/\D/g, "");
+  if (!clean.length) return null;
+  return `%${clean.split("").join("%")}%`;
+}
+
+function normalizeVendorForMatch(vendor: string | null | undefined) {
+  if (!vendor) return "";
+  return vendor
+    .trim()
+    .toLowerCase()
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\b[a-z]*bpo\b/g, "bpo")
+    .replace(/\s+/g, " ")
+    .replace(/^the\s+/, "")
+    .trim();
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseData>) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -63,8 +112,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(401).json({ ok: false, error: "Unauthorized" });
     }
 
+    console.log("[verification-items] incoming context", {
+      userId: userData.user.id,
+      leadIdRaw: leadIdRaw || null,
+      dealId,
+      policyKey,
+      callCenter,
+    });
+
     let leadId = leadIdRaw;
-    if (!leadId) {
+    let submissionId = "";
+
+    if (dealId != null) {
       const { data: dealRow, error: dealErr } = await supabaseAdmin
         .from("monday_com_deals")
         .select("id, monday_item_id, ghl_name, deal_name, phone_number, call_center")
@@ -79,114 +138,138 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         return res.status(404).json({ ok: false, error: "Monday deal not found" });
       }
 
-      const submissionId = typeof dealRow.monday_item_id === "string" ? dealRow.monday_item_id.trim() : "";
-      const customerName =
+      const mondayName =
         (typeof dealRow.ghl_name === "string" && dealRow.ghl_name.trim().length ? dealRow.ghl_name.trim() : "") ||
         (typeof dealRow.deal_name === "string" && dealRow.deal_name.trim().length ? dealRow.deal_name.trim() : "") ||
         "";
-      const phone = typeof dealRow.phone_number === "string" ? dealRow.phone_number.trim() : "";
-      const vendor = typeof dealRow.call_center === "string" ? dealRow.call_center.trim() : "";
+      const mondayNameNorm = normalizeName(mondayName);
+      const mondayPhone10 = last10Digits(typeof dealRow.phone_number === "string" ? dealRow.phone_number : "");
+      const mondayVendorNorm = normalizeVendorForMatch(typeof dealRow.call_center === "string" ? dealRow.call_center : "");
 
-      const shadowLead = {
-        submission_id: submissionId || null,
-        customer_full_name: customerName || null,
-        phone_number: phone || null,
-        lead_vendor: vendor || null,
-      } as Record<string, unknown>;
+      console.log("[verification-items] monday row", {
+        dealId: dealRow.id,
+        mondayItemId: dealRow.monday_item_id,
+        mondayName,
+        mondayPhone: dealRow.phone_number,
+        mondayPhone10,
+        callCenter: dealRow.call_center,
+        mondayVendorNorm,
+      });
 
-      // If we have a submission_id, try to re-use an existing leads row first.
-      if (submissionId) {
-        const { data: existingLead, error: existingErr } = await supabaseAdmin
-          .from("leads")
-          .select("id")
-          .eq("submission_id", submissionId)
-          .order("updated_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (existingErr) {
-          return res.status(500).json({ ok: false, error: existingErr.message });
-        }
-
-        const existingId =
-          existingLead && typeof existingLead === "object" && existingLead !== null && "id" in existingLead
-            ? (existingLead["id"] as unknown)
-            : null;
-        const existingIdStr = typeof existingId === "string" ? existingId : "";
-        if (existingIdStr) {
-          leadId = existingIdStr;
+      const orParts: string[] = [];
+      if (mondayName) {
+        const escapedName = mondayName.replace(/,/g, "");
+        orParts.push(`customer_full_name.ilike.%${escapedName}%`);
+      }
+      if (mondayPhone10) {
+        const phonePattern = buildDigitWildcardPattern(mondayPhone10);
+        if (phonePattern) {
+          orParts.push(`phone_number.ilike.${phonePattern}`);
         }
       }
 
-      if (!leadId) {
-        const insertOrUpsert = async () => {
-          if (submissionId) {
-            return supabaseAdmin
-              .from("leads")
-              .upsert(shadowLead, { onConflict: "submission_id" })
-              .select("id")
-              .maybeSingle();
-          }
+      let leadQuery = supabaseAdmin
+        .from("leads")
+        .select("id, submission_id, customer_full_name, phone_number, lead_vendor, created_at")
+        .order("created_at", { ascending: false })
+        .limit(500);
 
-          return supabaseAdmin.from("leads").insert(shadowLead).select("id").maybeSingle();
+      if (orParts.length > 0) {
+        leadQuery = leadQuery.or(orParts.join(","));
+      }
+
+      const { data: leadCandidatesRaw, error: leadCandidatesErr } = await leadQuery;
+      if (leadCandidatesErr) {
+        return res.status(500).json({ ok: false, error: leadCandidatesErr.message });
+      }
+
+      const leadCandidates = (leadCandidatesRaw ?? []) as LeadCandidateRow[];
+
+      const scored = leadCandidates.map((candidate) => {
+        const candidateNameNorm = normalizeName(candidate.customer_full_name);
+        const candidatePhone10 = last10Digits(candidate.phone_number);
+        const candidateVendorNorm = normalizeVendorForMatch(candidate.lead_vendor);
+        const nameExact = !!mondayNameNorm && candidateNameNorm === mondayNameNorm;
+        const phoneExact = !!mondayPhone10 && !!candidatePhone10 && candidatePhone10 === mondayPhone10;
+        const vendorMatch =
+          !!mondayVendorNorm &&
+          !!candidateVendorNorm &&
+          (mondayVendorNorm === candidateVendorNorm ||
+            mondayVendorNorm.includes(candidateVendorNorm) ||
+            candidateVendorNorm.includes(mondayVendorNorm));
+        const createdAtScore = Date.parse(candidate.created_at ?? "") || 0;
+
+        return {
+          candidate,
+          nameExact,
+          phoneExact,
+          vendorMatch,
+          createdAtScore,
         };
+      });
 
-        const { data: insertedLead, error: insertErr } = await insertOrUpsert();
+      const nameExactPool = scored.filter((s) => s.nameExact);
+      const pool = nameExactPool.length > 0 ? nameExactPool : scored;
 
-        if (insertErr) {
-          // If a race caused a unique violation, retry reading the existing lead by submission_id.
-          if (submissionId) {
-            const { data: existingLead2, error: existingErr2 } = await supabaseAdmin
-              .from("leads")
-              .select("id")
-              .eq("submission_id", submissionId)
-              .order("updated_at", { ascending: false })
-              .limit(1)
-              .maybeSingle();
+      pool.sort((a, b) => {
+        if (Number(b.nameExact) !== Number(a.nameExact)) return Number(b.nameExact) - Number(a.nameExact);
+        if (Number(b.phoneExact) !== Number(a.phoneExact)) return Number(b.phoneExact) - Number(a.phoneExact);
+        if (Number(b.vendorMatch) !== Number(a.vendorMatch)) return Number(b.vendorMatch) - Number(a.vendorMatch);
+        return b.createdAtScore - a.createdAtScore;
+      });
 
-            if (existingErr2) {
-              return res.status(500).json({ ok: false, error: existingErr2.message });
-            }
+      const picked = pool[0] ?? null;
 
-            const existingId2 =
-              existingLead2 && typeof existingLead2 === "object" && existingLead2 !== null && "id" in existingLead2
-                ? (existingLead2["id"] as unknown)
-                : null;
-            const existingId2Str = typeof existingId2 === "string" ? existingId2 : "";
-            if (existingId2Str) {
-              leadId = existingId2Str;
-            } else {
-              return res.status(500).json({ ok: false, error: insertErr.message });
-            }
-          } else {
-            return res.status(500).json({ ok: false, error: insertErr.message });
-          }
-        }
+      console.log("[verification-items] lead matching summary", {
+        candidateCount: leadCandidates.length,
+        exactNameCount: nameExactPool.length,
+        topCandidates: pool.slice(0, 5).map((p) => ({
+          leadId: p.candidate.id,
+          submissionId: p.candidate.submission_id,
+          customerName: p.candidate.customer_full_name,
+          phone: p.candidate.phone_number,
+          vendor: p.candidate.lead_vendor,
+          nameExact: p.nameExact,
+          phoneExact: p.phoneExact,
+          vendorMatch: p.vendorMatch,
+          createdAt: p.candidate.created_at,
+        })),
+      });
 
-        if (!leadId) {
-          const insertedId =
-            insertedLead && typeof insertedLead === "object" && insertedLead !== null && "id" in insertedLead
-              ? (insertedLead["id"] as unknown)
-              : null;
-          leadId = typeof insertedId === "string" ? insertedId : "";
-        }
+      if (!picked) {
+        return res.status(404).json({ ok: false, error: "No matching lead found for this deal" });
       }
 
-      if (!leadId) {
-        return res.status(500).json({ ok: false, error: "Failed to create shadow lead" });
-      }
+      leadId = picked.candidate.id;
+      submissionId = typeof picked.candidate.submission_id === "string" ? picked.candidate.submission_id.trim() : "";
     }
 
-    const { data: leadRow } = await supabaseAdmin
-      .from("leads")
-      .select("submission_id")
-      .eq("id", leadId)
-      .maybeSingle();
+    if (!leadId) {
+      return res.status(400).json({ ok: false, error: "leadId or dealId is required" });
+    }
 
-    const submissionId =
-      leadRow && typeof leadRow === "object" && leadRow !== null && "submission_id" in leadRow && typeof leadRow["submission_id"] === "string"
-        ? leadRow["submission_id"].trim()
-        : "";
+    if (!submissionId) {
+      const { data: leadRow } = await supabaseAdmin
+        .from("leads")
+        .select("submission_id")
+        .eq("id", leadId)
+        .maybeSingle();
+
+      submissionId =
+        leadRow &&
+        typeof leadRow === "object" &&
+        leadRow !== null &&
+        "submission_id" in leadRow &&
+        typeof leadRow["submission_id"] === "string"
+          ? leadRow["submission_id"].trim()
+          : "";
+    }
+
+    console.log("[verification-items] resolved lead/submission", {
+      leadId,
+      submissionId: submissionId || null,
+      source: dealId != null ? "deal_matching" : "lead_id",
+    });
 
     if (!submissionId) {
       return res.status(400).json({ ok: false, error: "Lead is missing submission_id" });
@@ -198,7 +281,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       .eq("submission_id", submissionId)
       .in("status", ["pending", "in_progress", "ready_for_transfer", "transferred", "completed"])
       .order("created_at", { ascending: false, nullsFirst: false })
-      .order("updated_at", { ascending: false, nullsFirst: false })
       .order("id", { ascending: false, nullsFirst: false })
       .limit(1)
       .maybeSingle();
@@ -209,6 +291,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     let session = (existingSession ?? null) as Record<string, unknown> | null;
     let sessionId = session && typeof session["id"] === "string" ? (session["id"] as string) : "";
+
+    console.log("[verification-items] session lookup", {
+      submissionId,
+      foundSessionId: sessionId || null,
+      foundSessionStatus: session && typeof session["status"] === "string" ? (session["status"] as string) : null,
+      foundSessionCreatedAt:
+        session && typeof session["created_at"] === "string" ? (session["created_at"] as string) : null,
+    });
 
     if (!sessionId) {
       const sessionInsert: Record<string, unknown> = {
@@ -229,6 +319,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
       session = (insertedSession ?? null) as Record<string, unknown> | null;
       sessionId = session && typeof session["id"] === "string" ? (session["id"] as string) : "";
+
+      console.log("[verification-items] session created", {
+        submissionId,
+        sessionId: sessionId || null,
+      });
     }
 
     if (!sessionId) {
@@ -373,6 +468,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const finalItems = sortVerificationItems((itemsRows2 ?? []) as Array<Record<string, unknown>>);
+    console.log("[verification-items] final response", {
+      leadId,
+      submissionId,
+      sessionId,
+      itemCount: finalItems.length,
+    });
     return res.status(200).json({ ok: true, sessionId, items: finalItems });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed to load verification items";
