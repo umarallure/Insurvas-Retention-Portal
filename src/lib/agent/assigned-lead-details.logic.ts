@@ -2267,6 +2267,13 @@ export function useAssignedLeadDetails() {
         const policyKeyForSession = policyNumber ?? fallbackPolicyKey;
 
         const autofillData = verificationAutofillByFieldName;
+        console.log("[assigned-lead-details] verification request", {
+          leadId: leadIdForVerification,
+          dealId: dealIdForVerification,
+          policyKey: policyKeyForSession,
+          callCenter: selectedPolicyView?.callCenter ?? null,
+        });
+
         const resp = await fetch("/api/verification-items", {
           method: "POST",
           headers: {
@@ -2294,6 +2301,11 @@ export function useAssignedLeadDetails() {
 
         const sessionId = (json as { ok: true; sessionId: string }).sessionId;
         const items = (json as { ok: true; items: Array<Record<string, unknown>> }).items;
+
+        console.log("[assigned-lead-details] verification response", {
+          sessionId,
+          itemCount: Array.isArray(items) ? items.length : 0,
+        });
 
         if (cancelled) return;
         
@@ -2380,6 +2392,11 @@ export function useAssignedLeadDetails() {
       .eq("id", itemId);
 
     if (updateErr) throw updateErr;
+    console.log("[assigned-lead-details] verification toggle saved", {
+      itemId,
+      checked,
+      sessionId: verificationSessionId,
+    });
     await touchVerificationSession();
   };
 
@@ -2400,6 +2417,11 @@ export function useAssignedLeadDetails() {
       .eq("id", itemId);
 
     if (updateErr) throw updateErr;
+    console.log("[assigned-lead-details] verification value saved", {
+      itemId,
+      value,
+      sessionId: verificationSessionId,
+    });
     await touchVerificationSession();
   };
 
