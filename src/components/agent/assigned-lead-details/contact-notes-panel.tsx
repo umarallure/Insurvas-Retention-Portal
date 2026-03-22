@@ -104,6 +104,8 @@ export function ContactNotesPanel({ submissionId, className }: ContactNotesPanel
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  console.log("Loading contact notes for submissionId:", submissionId);
+
   useEffect(() => {
     let cancelled = false;
 

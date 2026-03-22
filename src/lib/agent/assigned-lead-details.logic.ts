@@ -2348,6 +2348,17 @@ export function useAssignedLeadDetails() {
     };
   }, [lead, personalLead, selectedDeal, selectedPolicyKey, selectedPolicyView, verificationAutofillByFieldName]);
 
+  const touchVerificationSession = async () => {
+    if (!verificationSessionId) return;
+
+    const { error: sessionErr } = await supabase
+      .from("verification_sessions")
+      .update({ updated_at: new Date().toISOString() })
+      .eq("id", verificationSessionId);
+
+    if (sessionErr) throw sessionErr;
+  };
+
   const toggleVerificationItem = async (itemId: string, checked: boolean) => {
     const currentValue = verificationInputValues[itemId] ?? "";
     const item = verificationItems.find((r) => r["id"] === itemId) ?? null;
@@ -2369,6 +2380,7 @@ export function useAssignedLeadDetails() {
       .eq("id", itemId);
 
     if (updateErr) throw updateErr;
+    await touchVerificationSession();
   };
 
 
@@ -2388,6 +2400,7 @@ export function useAssignedLeadDetails() {
       .eq("id", itemId);
 
     if (updateErr) throw updateErr;
+    await touchVerificationSession();
   };
 
   const notesItems = useMemo(() => {
