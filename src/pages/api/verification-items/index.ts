@@ -196,8 +196,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       .from("verification_sessions")
       .select("*")
       .eq("submission_id", submissionId)
-      .order("updated_at", { ascending: false, nullsFirst: false })
+      .in("status", ["pending", "in_progress", "ready_for_transfer", "transferred", "completed"])
       .order("created_at", { ascending: false, nullsFirst: false })
+      .order("updated_at", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false, nullsFirst: false })
       .limit(1)
       .maybeSingle();
 
