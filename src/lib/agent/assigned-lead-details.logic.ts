@@ -402,20 +402,131 @@ export function useAssignedLeadDetails() {
             setMondayDeals([]);
           }
 
-          const submissionId = deal && typeof deal.monday_item_id === "string" ? deal.monday_item_id.trim() : "";
-          if (submissionId) {
-            const { data: leadRow, error: leadErr } = await supabase
+          // Match lead for this deal using name + phone + vendor, similar to
+          // the /api/verification-items matching logic. Fall back to
+          // submission_id mapping if needed. This ensures that even when the
+          // submission_id link is missing, we still pick the best lead.
+          let matchedLead: LeadRecord | null = null;
+
+          if (deal) {
+            const mondayName =
+              (typeof deal.ghl_name === "string" && deal.ghl_name.trim().length ? deal.ghl_name.trim() : "") ||
+              (typeof deal.deal_name === "string" && deal.deal_name.trim().length ? deal.deal_name.trim() : "") ||
+              "";
+            const mondayNameNorm = normalizeName(mondayName);
+            const mondayPhone10 = normalizePhoneDigits(typeof deal.phone_number === "string" ? deal.phone_number : "");
+            const mondayVendorNorm = normalizeVendorForMatch(
+              typeof deal.call_center === "string" ? deal.call_center : "",
+            );
+
+            console.log("[assigned-lead-details] lead match context", {
+              dealId,
+              mondayItemId: deal.monday_item_id ?? null,
+              mondayName,
+              mondayNameNorm,
+              mondayPhone: deal.phone_number ?? null,
+              mondayPhone10,
+              callCenter: deal.call_center ?? null,
+              mondayVendorNorm,
+            });
+
+            const orParts: string[] = [];
+            if (mondayName) {
+              const escapedName = mondayName.replace(/,/g, "");
+              orParts.push(`customer_full_name.ilike.%${escapedName}%`);
+            }
+            if (mondayPhone10) {
+              const phonePattern = buildDigitWildcardPattern(mondayPhone10);
+              if (phonePattern) {
+                orParts.push(`phone_number.ilike.${phonePattern}`);
+              }
+            }
+
+            let leadQuery = supabase
               .from("leads")
               .select("*")
-              .eq("submission_id", submissionId)
-              .order("updated_at", { ascending: false })
-              .limit(1)
-              .maybeSingle();
+              .order("created_at", { ascending: false })
+              .limit(500);
 
-            if (leadErr) throw leadErr;
-            if (!cancelled && navRequestIdRef.current === requestId) setLead((leadRow ?? null) as LeadRecord | null);
-          } else if (!cancelled && navRequestIdRef.current === requestId) {
-            setLead(null);
+            if (orParts.length > 0) {
+              leadQuery = leadQuery.or(orParts.join(","));
+            }
+
+            const { data: leadCandidatesRaw, error: leadCandidatesErr } = await leadQuery;
+            if (leadCandidatesErr) throw leadCandidatesErr;
+
+            const leadCandidates = (leadCandidatesRaw ?? []) as LeadRecord[];
+
+            const scored = leadCandidates.map((candidate) => {
+              const candidateNameNorm = normalizeName(getString(candidate, "customer_full_name"));
+              const candidatePhone10 = normalizePhoneDigits(getString(candidate, "phone_number") ?? "");
+              const candidateVendorNorm = normalizeVendorForMatch(getString(candidate, "lead_vendor"));
+              const nameExact = !!mondayNameNorm && candidateNameNorm === mondayNameNorm;
+              const phoneExact =
+                !!mondayPhone10 && !!candidatePhone10 && candidatePhone10.slice(-10) === mondayPhone10.slice(-10);
+              const vendorMatch =
+                !!mondayVendorNorm &&
+                !!candidateVendorNorm &&
+                (mondayVendorNorm === candidateVendorNorm ||
+                  mondayVendorNorm.includes(candidateVendorNorm) ||
+                  candidateVendorNorm.includes(mondayVendorNorm));
+              const createdAtScore = Date.parse(getString(candidate, "created_at") ?? "") || 0;
+
+              return {
+                candidate,
+                nameExact,
+                phoneExact,
+                vendorMatch,
+                createdAtScore,
+              };
+            });
+
+            const nameExactPool = scored.filter((s) => s.nameExact);
+            const pool = nameExactPool.length > 0 ? nameExactPool : scored;
+
+            pool.sort((a, b) => {
+              if (Number(b.nameExact) !== Number(a.nameExact)) return Number(b.nameExact) - Number(a.nameExact);
+              if (Number(b.phoneExact) !== Number(a.phoneExact)) return Number(b.phoneExact) - Number(a.phoneExact);
+              if (Number(b.vendorMatch) !== Number(a.vendorMatch)) return Number(b.vendorMatch) - Number(a.vendorMatch);
+              return b.createdAtScore - a.createdAtScore;
+            });
+
+            const picked = pool[0] ?? null;
+
+            console.log("[assigned-lead-details] lead matching summary", {
+              candidateCount: leadCandidates.length,
+              exactNameCount: nameExactPool.length,
+              topCandidates: pool.slice(0, 5).map((p) => ({
+                leadId: (p.candidate as Record<string, unknown>)["id"] ?? null,
+                submissionId: (p.candidate as Record<string, unknown>)["submission_id"] ?? null,
+                customerName: getString(p.candidate, "customer_full_name"),
+                phone: getString(p.candidate, "phone_number"),
+                vendor: getString(p.candidate, "lead_vendor"),
+                nameExact: p.nameExact,
+                phoneExact: p.phoneExact,
+                vendorMatch: p.vendorMatch,
+                createdAt: getString(p.candidate, "created_at"),
+              })),
+            });
+
+            if (picked) {
+              matchedLead = picked.candidate;
+            }
+
+            const matchedLeadId =
+              (matchedLead && typeof matchedLead["id"] === "string" ? (matchedLead["id"] as string) : null) ?? null;
+            const matchedSubmissionId = getString(matchedLead, "submission_id");
+
+            console.log("[assigned-lead-details] final matched lead", {
+              dealId,
+              mondayItemId: deal.monday_item_id ?? null,
+              matchedLeadId,
+              matchedSubmissionId,
+            });
+          }
+
+          if (!cancelled && navRequestIdRef.current === requestId) {
+            setLead(matchedLead);
           }
 
           if (!cancelled && navRequestIdRef.current === requestId) {

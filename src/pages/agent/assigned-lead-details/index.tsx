@@ -116,6 +116,14 @@ export default function AssignedLeadDetailsPage() {
     });
   }, []);
 
+  React.useEffect(() => {
+    if (lead && lead.submission_id) {
+      // Log the submission id of the matched lead
+      // eslint-disable-next-line no-console
+      console.log("[assigned-lead-details] lead submission_id:", lead.submission_id);
+    }
+  }, [lead]);
+
   return (
     <div className="w-full px-6 py-8 min-h-screen bg-muted/20">
       <PolicyStatusAlertDialog
@@ -270,7 +278,7 @@ export default function AssignedLeadDetailsPage() {
                       <div className="space-y-4">
                         {(selectedDeal?.monday_item_id || lead?.submission_id) ? (
                           <ContactNotesPanel
-                            submissionId={String(selectedDeal?.monday_item_id ?? lead?.submission_id ?? "")}
+                            mondayItemId={String(selectedDeal?.monday_item_id ?? lead?.submission_id ?? "")}
                           />
                         ) : (
                           <div className="text-sm text-muted-foreground">No submission ID available for contact notes.</div>

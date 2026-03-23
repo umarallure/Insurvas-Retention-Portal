@@ -38,7 +38,7 @@ type NotesRow = {
 };
 
 interface ContactNotesPanelProps {
-  submissionId: string;
+  mondayItemId: string;
   className?: string;
 }
 
@@ -99,12 +99,12 @@ function dedupeNotes(notes: NoteRecord[]) {
   return unique;
 }
 
-export function ContactNotesPanel({ submissionId, className }: ContactNotesPanelProps) {
+export function ContactNotesPanel({ mondayItemId, className }: ContactNotesPanelProps) {
   const [row, setRow] = useState<NotesRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  console.log("Loading contact notes for submissionId:", submissionId);
+  console.log("Loading contact notes for mondayItemId:", mondayItemId);
 
   useEffect(() => {
     let cancelled = false;
@@ -114,7 +114,7 @@ export function ContactNotesPanel({ submissionId, className }: ContactNotesPanel
         setLoading(true);
         setError(null);
 
-        const response = await fetch(`/api/monday-deal-contact-notes?mondayItemId=${encodeURIComponent(submissionId)}`);
+        const response = await fetch(`/api/monday-deal-contact-notes?mondayItemId=${encodeURIComponent(mondayItemId)}`);
         const payload = (await response.json()) as { row?: NotesRow | null; error?: string };
 
         if (cancelled) return;
@@ -138,7 +138,7 @@ export function ContactNotesPanel({ submissionId, className }: ContactNotesPanel
       }
     }
 
-    if (!submissionId) {
+    if (!mondayItemId) {
       setLoading(false);
       setRow(null);
       return;
@@ -148,7 +148,7 @@ export function ContactNotesPanel({ submissionId, className }: ContactNotesPanel
     return () => {
       cancelled = true;
     };
-  }, [submissionId]);
+  }, [mondayItemId]);
 
   const notes = useMemo(() => {
     return dedupeNotes(Array.isArray(row?.notes) ? row.notes : []);
