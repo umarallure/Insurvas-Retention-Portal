@@ -185,7 +185,7 @@ function mergeLeadRecords(
   if (!allLeads.length) return null;
 
   const normalizedPreferred = preferredVendor
-    ? normalizeVendorForMatch(preferredVendor.trim())
+    ? normalizeVendorForMatch((preferredVendor ?? "").trim())
     : null;
 
   let exactMatch: LeadRecord | null = null;
@@ -194,7 +194,7 @@ function mergeLeadRecords(
   for (const lead of allLeads) {
     const vendor = getString(lead, "lead_vendor");
     if (vendor && normalizedPreferred) {
-      const normalized = normalizeVendorForMatch(vendor);
+      const normalized = normalizeVendorForMatch(vendor ?? "");
       if (normalized === normalizedPreferred) {
         if (!exactMatch) exactMatch = lead;
         continue;
@@ -416,7 +416,7 @@ export function useAssignedLeadDetails() {
             const mondayNameNorm = normalizeName(mondayName);
             const mondayPhone10 = normalizePhoneDigits(typeof deal.phone_number === "string" ? deal.phone_number : "");
             const mondayVendorNorm = normalizeVendorForMatch(
-              typeof deal.call_center === "string" ? deal.call_center : "",
+              typeof deal.call_center === "string" ? deal.call_center : ""
             );
 
             console.log("[assigned-lead-details] lead match context", {
@@ -1543,7 +1543,7 @@ export function useAssignedLeadDetails() {
 
     const getPolicyVendorKey = (policy: MondayComDeal) => {
       const v = typeof policy.call_center === "string" ? policy.call_center : "";
-      return normalizeVendorForMatch(v);
+      return normalizeVendorForMatch(v ?? "");
     };
 
     const getDdfVendorKey = (row: Record<string, unknown>) => {
