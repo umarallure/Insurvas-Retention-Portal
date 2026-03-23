@@ -460,7 +460,7 @@ export function useAssignedLeadDetails() {
             const scored = leadCandidates.map((candidate) => {
               const candidateNameNorm = normalizeName(getString(candidate, "customer_full_name"));
               const candidatePhone10 = normalizePhoneDigits(getString(candidate, "phone_number") ?? "");
-              const candidateVendorNorm = normalizeVendorForMatch(getString(candidate, "lead_vendor"));
+              const candidateVendorNorm = normalizeVendorForMatch(getString(candidate, "lead_vendor") ?? "");
               const nameExact = !!mondayNameNorm && candidateNameNorm === mondayNameNorm;
               const phoneExact =
                 !!mondayPhone10 && !!candidatePhone10 && candidatePhone10.slice(-10) === mondayPhone10.slice(-10);
