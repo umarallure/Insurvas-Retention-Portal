@@ -13,6 +13,8 @@
     "monday:export-deals-csv": "tsx scripts/export_monday_deals_csv.ts",
     "monday:diff-clean-deals": "tsx scripts/diff_monday_deals_clean.ts",
     "monday:tcpa-scrub": "tsx scripts/monday_tcpa_scrub.ts",
+    "contacts:tcpa-scrub": "tsx scripts/tcpa_scrub_contacts_csv.ts",
+    "contacts:delete-tcpa": "tsx scripts/delete_tcpa_contacts.ts",
     "cloudtalk:test-campaign": "tsx scripts/test_cloudtalk_campaign.ts",
     "vicidial:bootstrap": "tsx scripts/bootstrap_vicidial_agent_mapping.ts",
     "vicidial:generate-bootstrap": "tsx scripts/generate_vicidial_bootstrap_from_supabase.ts",
