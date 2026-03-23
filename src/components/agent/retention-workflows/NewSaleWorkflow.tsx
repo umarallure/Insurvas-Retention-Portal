@@ -55,17 +55,11 @@ export function NewSaleWorkflow({
   const [submitting, setSubmitting] = React.useState(false);
 
   const handleSubmit = async () => {
-    const hasLeadOrDeal = !!leadId || dealId != null;
 
-    if (!policyNumber || !hasLeadOrDeal) {
-      toast({
-        title: "Missing lead data",
-        description: "A policy and either a lead or deal are required before submitting this handoff.",
-        variant: "destructive",
-      });
-      return;
-    }
 
+    console.log("the submissionId is:", submissionId );
+    console.log("the leadId is:", leadId );
+    console.log("the dealId is:", dealId );
     setSubmitting(true);
     try {
       const {
