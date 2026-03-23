@@ -30,7 +30,7 @@ type PolicyCardProps = {
   onToggleWorkflow: (workflowType: RetentionType) => void;
   onOpenPolicyStatusAlert: () => void;
   onConfirmNewSale: (policyKey: string) => void;
-  lead: { id?: string } | null;
+  lead: Record<string, unknown> | null;
   selectedDeal: { monday_item_id?: string | null; ghl_stage?: string | null } | null;
   retentionAgent: string;
   verificationSessionId: string | null;
