@@ -111,10 +111,11 @@ export function VerificationPanel({
       "";
 
     const cleanPhone = phoneValue.replace(/\D/g, "");
-    if (!cleanPhone || cleanPhone.length < 10) {
+    const normalizedPhone = cleanPhone.length > 10 ? cleanPhone.slice(-10) : cleanPhone;
+    if (!normalizedPhone || normalizedPhone.length !== 10) {
       toast({
         title: "Invalid Phone Number",
-        description: "Please enter a valid phone number before checking DNC.",
+        description: "Please enter a valid 10-digit phone number before checking DNC.",
         variant: "destructive",
       });
       return;
@@ -122,49 +123,128 @@ export function VerificationPanel({
 
     setDncCheckingItemId(itemId);
     try {
-      const { data, error } = await supabase.functions.invoke("blacklist-check", {
-        body: { mobileNumber: cleanPhone },
-      });
+      const [blacklistResult, dncResult] = await Promise.allSettled([
+        supabase.functions.invoke("blacklist-check", { body: { mobileNumber: normalizedPhone } }),
+        supabase.functions.invoke("dnc-check", { body: { mobileNumber: normalizedPhone } }),
+      ]);
 
-      if (error) {
-        throw new Error(error.message || "DNC lookup failed");
+      const payloads: Array<Record<string, unknown>> = [];
+      const checkErrors: string[] = [];
+
+      const asRecord = (value: unknown): Record<string, unknown> | null => {
+        if (value && typeof value === "object") return value as Record<string, unknown>;
+        if (typeof value === "string") {
+          try {
+            const parsed = JSON.parse(value) as unknown;
+            if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
+          } catch {
+            return null;
+          }
+        }
+        return null;
+      };
+
+      const collectPayloadCandidates = (data: unknown): Array<Record<string, unknown>> => {
+        const root = asRecord(data);
+        if (!root) return [];
+
+        const candidates: Array<Record<string, unknown>> = [root];
+        const firstData = asRecord(root.data);
+        if (firstData) {
+          candidates.push(firstData);
+          const secondData = asRecord(firstData.data);
+          if (secondData) candidates.push(secondData);
+        }
+        return candidates;
+      };
+
+      if (blacklistResult.status === "fulfilled") {
+        const { data, error } = blacklistResult.value;
+        if (error) {
+          checkErrors.push(`blacklist-check: ${error.message || "unknown error"}`);
+        } else {
+          payloads.push(...collectPayloadCandidates(data));
+        }
+      } else {
+        checkErrors.push(`blacklist-check: ${blacklistResult.reason instanceof Error ? blacklistResult.reason.message : "unknown error"}`);
       }
 
-      const payload =
-        data && typeof data === "object" && "data" in (data as Record<string, unknown>)
-          ? ((data as Record<string, unknown>).data as Record<string, unknown> | null)
-          : (data as Record<string, unknown> | null);
+      if (dncResult.status === "fulfilled") {
+        const { data, error } = dncResult.value;
+        if (error) {
+          checkErrors.push(`dnc-check: ${error.message || "unknown error"}`);
+        } else {
+          payloads.push(...collectPayloadCandidates(data));
+        }
+      } else {
+        checkErrors.push(`dnc-check: ${dncResult.reason instanceof Error ? dncResult.reason.message : "unknown error"}`);
+      }
+
+      if (payloads.length === 0) {
+        throw new Error(checkErrors.join(" | ") || "DNC lookup failed");
+      }
 
       const listIncludes = (value: unknown) =>
-        Array.isArray(value) && value.some((v) => typeof v === "string" && (v === cleanPhone || v.endsWith(cleanPhone.slice(-10))));
+        Array.isArray(value) &&
+        value.some((v) => {
+          const digits = typeof v === "string" ? v.replace(/\D/g, "") : "";
+          const candidate = digits.length > 10 ? digits.slice(-10) : digits;
+          return candidate === normalizedPhone;
+        });
 
-      const isTcpaFromNormalized = payload?.is_tcpa === true || payload?.is_blacklisted === true;
-      const isDncFromNormalized = payload?.is_dnc === true;
-      const isDncFromLists = listIncludes(payload?.federal_dnc) || listIncludes(payload?.dnc);
-      const isTcpaFromLists = listIncludes(payload?.tcpa_litigator);
+      const tcpaLitigatorIncludes = (value: unknown) => {
+        if (Array.isArray(value)) {
+          return value.some((v) => {
+            const digits = typeof v === "string" ? v.replace(/\D/g, "") : "";
+            const candidate = digits.length > 10 ? digits.slice(-10) : digits;
+            return candidate === normalizedPhone;
+          });
+        }
 
-      const isTcpa = isTcpaFromNormalized || isTcpaFromLists;
+        if (value && typeof value === "object") {
+          const map = value as Record<string, unknown>;
+          const exactValue = map[normalizedPhone];
+          if (typeof exactValue === "boolean") return exactValue;
+          if (typeof exactValue === "string") return exactValue.toLowerCase() === "true";
+          return Boolean(exactValue);
+        }
+
+        return false;
+      };
+
+      const isTcpaFromNormalized = payloads.some((payload) => payload?.is_tcpa === true || payload?.is_blacklisted === true);
+      const isDncFromNormalized = payloads.some((payload) => payload?.is_dnc === true);
+      const isDncFromLists = payloads.some((payload) => listIncludes(payload?.federal_dnc) || listIncludes(payload?.dnc));
+      const isTcpaFromLists = payloads.some((payload) => tcpaLitigatorIncludes(payload?.tcpa_litigator));
+      const isTcpaFromMessage = payloads.some((payload) => {
+        const msg = typeof payload?.message === "string" ? payload.message.toLowerCase() : "";
+        return msg.includes("tcpa") || msg.includes("litigator");
+      });
+
+      const isTcpa = isTcpaFromNormalized || isTcpaFromLists || isTcpaFromMessage;
       const isDnc = isDncFromNormalized || isDncFromLists;
 
       const status: "clear" | "dnc" | "tcpa" = isTcpa ? "tcpa" : isDnc ? "dnc" : "clear";
-      const normalizedMessage = typeof payload?.message === "string" ? payload.message : null;
+      const firstMessagePayload = payloads.find((payload) => typeof payload?.message === "string");
+      const normalizedMessage = typeof firstMessagePayload?.message === "string" ? firstMessagePayload.message : null;
       const message = normalizedMessage
         ? normalizedMessage
         : isTcpa
-        ? "WARNING: This number is flagged as TCPA/Litigator."
+        ? "WARNING: Do not proceed with this contact. This is TCPA."
         : isDnc
           ? "This number is on the DNC list. Proceed with verbal consent."
           : "This number is clear. Please verify consent with the customer.";
+      const combinedMessage = checkErrors.length > 0 ? `${message} (One check failed: ${checkErrors.join(" | ")})` : message;
 
       setPhoneDncStatusByItem((prev) => ({ ...prev, [itemId]: status }));
       setPhoneDncStatus(status);
-      setDncMessage(message);
+      setDncMessage(combinedMessage);
       setPendingPhoneVerification(itemId);
       setShowDncModal(true);
 
       toast({
         title: status === "tcpa" ? "TCPA Warning" : status === "dnc" ? "DNC Warning" : "Phone Check Complete",
-        description: message,
+        description: combinedMessage,
         variant: status === "tcpa" ? "destructive" : "default",
       });
     } catch (e) {
@@ -674,7 +754,7 @@ export function VerificationPanel({
           {phoneDncStatus === "tcpa" ? (
             <div className="py-4">
               <p className="text-red-600 font-bold text-center text-2xl">WARNING: This number is a TCPA LITIGATOR</p>
-              <p className="text-lg text-gray-600 text-center mt-3">This number has been flagged as a TCPA litigator. It is recommended to not proceed with this lead.</p>
+              <p className="text-lg text-gray-600 text-center mt-3">Do not proceed with this contact. This number has been flagged as TCPA litigator.</p>
             </div>
           ) : (
             <div className="py-4">
