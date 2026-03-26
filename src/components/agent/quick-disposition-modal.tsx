@@ -61,8 +61,16 @@ export function QuickDispositionModal({
   const [saving, setSaving] = React.useState(false);
 
   const allDispositions = React.useMemo(() => {
+    const sortPriority: Record<string, number> = {
+      DQ: 0,
+    };
     return Object.keys(DISPOSITION_METADATA)
-      .sort((a, b) => a.localeCompare(b))
+      .sort((a, b) => {
+        const pa = sortPriority[a] ?? 10;
+        const pb = sortPriority[b] ?? 10;
+        if (pa !== pb) return pa - pb;
+        return a.localeCompare(b);
+      })
       .map((d) => d as Disposition);
   }, []);
 

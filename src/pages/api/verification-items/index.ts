@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
+import { randomUUID } from "crypto";
 
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { sortVerificationItems } from "@/lib/verification-field-order";
@@ -9,6 +10,8 @@ type Body = {
   policyKey: string;
   callCenter?: string | null;
   autofill?: Record<string, string>;
+  createWhenNoMatch?: boolean;
+  missingLeadNote?: string;
 };
 
 type ResponseData =
@@ -78,6 +81,8 @@ function normalizeVendorForMatch(vendor: string | null | undefined) {
     .trim();
 }
 
+const DEFAULT_MISSING_LEAD_NOTE = "this lead was not available need to confirm with client";
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseData>) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -95,6 +100,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   const policyKey = typeof body.policyKey === "string" ? body.policyKey.trim() : "";
   const callCenter = typeof body.callCenter === "string" ? body.callCenter.trim() : null;
   const autofill = body.autofill && typeof body.autofill === "object" ? (body.autofill as Record<string, string>) : {};
+  const createWhenNoMatch = body.createWhenNoMatch === true;
+  const missingLeadNote =
+    typeof body.missingLeadNote === "string" && body.missingLeadNote.trim().length > 0
+      ? body.missingLeadNote.trim()
+      : DEFAULT_MISSING_LEAD_NOTE;
+  const effectiveAutofill: Record<string, string> = { ...autofill };
+  if (createWhenNoMatch && !effectiveAutofill.additional_notes?.trim()) {
+    effectiveAutofill.additional_notes = missingLeadNote;
+  }
 
   if (!policyKey) {
     return res.status(400).json({ ok: false, error: "policyKey is required" });
@@ -154,6 +168,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         mondayPhone10,
         callCenter: dealRow.call_center,
         mondayVendorNorm,
+        createWhenNoMatch,
       });
 
       const orParts: string[] = [];
@@ -237,11 +252,56 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       });
 
       if (!picked) {
-        return res.status(404).json({ ok: false, error: "No matching lead found for this deal" });
-      }
+        if (!createWhenNoMatch) {
+          return res.status(404).json({ ok: false, error: "No matching lead found for this deal" });
+        }
 
-      leadId = picked.candidate.id;
-      submissionId = typeof picked.candidate.submission_id === "string" ? picked.candidate.submission_id.trim() : "";
+        const generatedSubmissionId = randomUUID();
+        const leadVendor =
+          callCenter && callCenter.length
+            ? callCenter
+            : typeof dealRow.call_center === "string" && dealRow.call_center.trim().length
+              ? dealRow.call_center.trim()
+              : null;
+        const { data: insertedLead, error: insertLeadErr } = await supabaseAdmin
+          .from("leads")
+          .insert({
+            submission_id: generatedSubmissionId,
+            customer_full_name: mondayName || null,
+            phone_number: typeof dealRow.phone_number === "string" ? dealRow.phone_number : null,
+            lead_vendor: leadVendor,
+          })
+          .select("id, submission_id")
+          .maybeSingle();
+
+        if (insertLeadErr) {
+          return res.status(500).json({ ok: false, error: insertLeadErr.message });
+        }
+
+        leadId =
+          insertedLead &&
+          typeof insertedLead === "object" &&
+          "id" in insertedLead &&
+          typeof insertedLead.id === "string"
+            ? insertedLead.id
+            : "";
+        submissionId =
+          insertedLead &&
+          typeof insertedLead === "object" &&
+          "submission_id" in insertedLead &&
+          typeof insertedLead.submission_id === "string"
+            ? insertedLead.submission_id.trim()
+            : generatedSubmissionId;
+
+        console.log("[verification-items] created fallback lead for deal", {
+          dealId: dealRow.id,
+          leadId,
+          submissionId,
+        });
+      } else {
+        leadId = picked.candidate.id;
+        submissionId = typeof picked.candidate.submission_id === "string" ? picked.candidate.submission_id.trim() : "";
+      }
     }
 
     if (!leadId) {
@@ -330,7 +390,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(500).json({ ok: false, error: "Failed to create or load verification session" });
     }
 
-    if (leadId && autofill && Object.keys(autofill).length > 0) {
+    if (leadId && effectiveAutofill && Object.keys(effectiveAutofill).length > 0) {
       const leadUpdatePatch: Record<string, unknown> = {};
       
       // Only map fields that actually exist in the leads table
@@ -380,7 +440,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       };
 
       for (const [autofillKey, leadColumn] of Object.entries(fieldMappings)) {
-        const value = autofill[autofillKey];
+        const value = effectiveAutofill[autofillKey];
         if (value && typeof value === "string" && value.trim().length > 0 && value !== "—") {
           leadUpdatePatch[leadColumn] = value.trim();
         }
@@ -410,14 +470,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     const initial = (itemsRows ?? []) as Array<Record<string, unknown>>;
 
-    if (autofill && Object.keys(autofill).length > 0) {
+    if (effectiveAutofill && Object.keys(effectiveAutofill).length > 0) {
       if (initial.length === 0) {
-        const fieldNames = Object.keys(autofill).filter((k) => k.trim().length);
+        const fieldNames = Object.keys(effectiveAutofill).filter((k) => k.trim().length);
         if (fieldNames.length) {
           const inserts = fieldNames.map((fieldName) => ({
             session_id: sessionId,
             field_name: fieldName,
-            original_value: (autofill[fieldName] ?? "").toString(),
+            original_value: (effectiveAutofill[fieldName] ?? "").toString(),
           }));
 
           const { error: seedErr } = await supabaseAdmin.from("verification_items").insert(inserts);
@@ -434,7 +494,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           
           if (!itemId || !fieldName) continue;
           
-          const autofillValue = autofill[fieldName];
+          const autofillValue = effectiveAutofill[fieldName];
           if (autofillValue && typeof autofillValue === "string" && autofillValue.trim().length > 0) {
             // For monthly_premium and coverage_amount, always update with autofill value because these should match
             // what the policy card displays, even if original_value already exists. This ensures consistency.

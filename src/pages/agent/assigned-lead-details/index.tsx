@@ -53,11 +53,13 @@ export default function AssignedLeadDetailsPage() {
     selectedPolicyView,
     verificationLoading,
     verificationError,
+    creatingMissingLeadVerification,
     verificationSessionId,
     verificationItems,
     verificationInputValues,
     toggleVerificationItem,
     updateVerificationItemValue,
+    createMissingLeadAndVerification,
     dailyFlowLoading,
     dailyFlowError,
     dailyFlowRows,
@@ -293,10 +295,12 @@ export default function AssignedLeadDetailsPage() {
                   selectedPolicyView={selectedPolicyView}
                   loading={verificationLoading}
                   error={verificationError}
+                  creatingMissingLeadVerification={creatingMissingLeadVerification}
                   verificationItems={verificationItems}
                   verificationInputValues={verificationInputValues}
                   onToggleVerification={toggleVerificationItem}
                   onUpdateValue={updateVerificationItemValue}
+                  onCreateMissingLeadVerification={createMissingLeadAndVerification}
                 />
                 </div>
               </div>
