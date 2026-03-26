@@ -12,6 +12,14 @@ import type {
 } from "./types";
 import { affectsGHL, normalizePolicyStatus } from "./rules";
 
+type TargetDealRow = {
+  id: number;
+  monday_item_id: string | null;
+  policy_number: string | null;
+  disposition: string | null;
+  disposition_count: number;
+};
+
 /**
  * Save disposition to database and trigger appropriate actions
  */
@@ -36,13 +44,7 @@ export async function saveDisposition(
     if (fetchError) throw fetchError;
     if (!sourceDeal) throw new Error("Deal not found");
 
-    let targetDeals: Array<{
-      id: number;
-      monday_item_id: string | null;
-      policy_number: string | null;
-      disposition: string | null;
-      disposition_count: number | null;
-    }> = [
+    let targetDeals: TargetDealRow[] = [
       {
         id: sourceDeal.id as number,
         monday_item_id: (sourceDeal.monday_item_id as string | null) ?? null,
@@ -81,13 +83,7 @@ export async function saveDisposition(
               disposition_count: typeof row.disposition_count === "number" ? row.disposition_count : 0,
             };
           })
-          .filter((row): row is {
-            id: number;
-            monday_item_id: string | null;
-            policy_number: string | null;
-            disposition: string | null;
-            disposition_count: number | null;
-          } => row !== null);
+          .filter((row): row is TargetDealRow => row !== null);
         if (mapped.length > 0) {
           targetDeals = mapped;
         }
