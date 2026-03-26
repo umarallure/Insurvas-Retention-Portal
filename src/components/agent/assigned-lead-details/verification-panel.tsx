@@ -33,8 +33,10 @@ type VerificationPanelProps = {
   error: string | null;
   verificationItems: Array<Record<string, unknown>>;
   verificationInputValues: Record<string, string>;
+  creatingMissingLeadVerification?: boolean;
   onToggleVerification: (itemId: string, checked: boolean) => void;
   onUpdateValue: (itemId: string, value: string) => void;
+  onCreateMissingLeadVerification?: () => Promise<void>;
 };
 
 export function VerificationPanel({
@@ -43,8 +45,10 @@ export function VerificationPanel({
   error,
   verificationItems,
   verificationInputValues,
+  creatingMissingLeadVerification = false,
   onToggleVerification,
   onUpdateValue,
+  onCreateMissingLeadVerification,
 }: VerificationPanelProps) {
   const { toast } = useToast();
   const [showUnderwritingModal, setShowUnderwritingModal] = React.useState(false);
@@ -329,7 +333,30 @@ export function VerificationPanel({
         {loading ? (
           <div className="text-sm text-muted-foreground">Loading verification...</div>
         ) : error ? (
-          <div className="text-sm text-red-600">{error}</div>
+          <div className="space-y-3">
+            <div className="text-sm text-red-600">{error}</div>
+            {error.toLowerCase().includes("no matching lead found") && onCreateMissingLeadVerification ? (
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  void onCreateMissingLeadVerification().catch(() => {
+                    return;
+                  });
+                }}
+                disabled={creatingMissingLeadVerification}
+              >
+                {creatingMissingLeadVerification ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Creating lead + verification...
+                  </>
+                ) : (
+                  "Create lead + verification session"
+                )}
+              </Button>
+            ) : null}
+          </div>
         ) : verificationItems.length === 0 ? (
           <div className="text-sm text-muted-foreground">No verification fields yet.</div>
         ) : (

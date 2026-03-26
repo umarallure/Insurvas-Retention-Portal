@@ -24,57 +24,130 @@ export async function saveDisposition(
       throw new Error("Deal ID is required");
     }
 
-    // Get current disposition for history
-    const { data: currentDeal, error: fetchError } = await supabase
+    const isDisqualified = request.disposition === "DQ";
+
+    // Get source deal context for history and related-deals cascade.
+    const { data: sourceDeal, error: fetchError } = await supabase
       .from("monday_com_deals")
-      .select("disposition, disposition_count")
+      .select("id, monday_item_id, policy_number, disposition, disposition_count, phone_number, ghl_name, deal_name")
       .eq("id", request.dealId)
       .maybeSingle();
 
-    if (fetchError) console.log(fetchError);
+    if (fetchError) throw fetchError;
+    if (!sourceDeal) throw new Error("Deal not found");
 
-    const previousDisposition = currentDeal?.disposition || null;
-    const currentCount = currentDeal?.disposition_count || 0;
+    let targetDeals: Array<{
+      id: number;
+      monday_item_id: string | null;
+      policy_number: string | null;
+      disposition: string | null;
+      disposition_count: number | null;
+    }> = [
+      {
+        id: sourceDeal.id as number,
+        monday_item_id: (sourceDeal.monday_item_id as string | null) ?? null,
+        policy_number: (sourceDeal.policy_number as string | null) ?? null,
+        disposition: (sourceDeal.disposition as string | null) ?? null,
+        disposition_count: (sourceDeal.disposition_count as number | null) ?? 0,
+      },
+    ];
 
-    // Update monday_com_deals with new disposition
-    const updatePayload = {
+    if (isDisqualified) {
+      const phone = typeof sourceDeal.phone_number === "string" ? sourceDeal.phone_number.trim() : "";
+      const ghlName = typeof sourceDeal.ghl_name === "string" ? sourceDeal.ghl_name.trim() : "";
+      const dealName = typeof sourceDeal.deal_name === "string" ? sourceDeal.deal_name.trim() : "";
+      const orParts: string[] = [];
+      if (phone) orParts.push(`phone_number.eq.${phone}`);
+      if (ghlName) orParts.push(`ghl_name.ilike.%${ghlName.replace(/,/g, "")}%`);
+      if (dealName) orParts.push(`deal_name.ilike.%${dealName.replace(/,/g, "")}%`);
+
+      if (orParts.length > 0) {
+        const { data: relatedDeals, error: relatedDealsError } = await supabase
+          .from("monday_com_deals")
+          .select("id, monday_item_id, policy_number, disposition, disposition_count")
+          .or(orParts.join(","))
+          .limit(100);
+
+        if (relatedDealsError) throw relatedDealsError;
+        const mapped = (relatedDeals ?? [])
+          .map((row) => {
+            const id = typeof row.id === "number" ? row.id : null;
+            if (id == null) return null;
+            return {
+              id,
+              monday_item_id: typeof row.monday_item_id === "string" ? row.monday_item_id : null,
+              policy_number: typeof row.policy_number === "string" ? row.policy_number : null,
+              disposition: typeof row.disposition === "string" ? row.disposition : null,
+              disposition_count: typeof row.disposition_count === "number" ? row.disposition_count : 0,
+            };
+          })
+          .filter((row): row is {
+            id: number;
+            monday_item_id: string | null;
+            policy_number: string | null;
+            disposition: string | null;
+            disposition_count: number | null;
+          } => row !== null);
+        if (mapped.length > 0) {
+          targetDeals = mapped;
+        }
+      }
+    }
+
+    const basePayload: Record<string, unknown> = {
       disposition: request.disposition,
       disposition_date: new Date().toISOString(),
       disposition_agent_id: request.agentId,
       disposition_agent_name: request.agentName,
       disposition_notes: request.notes || null,
       callback_datetime: request.callbackDatetime || null,
-      disposition_count: currentCount + 1,
       updated_at: new Date().toISOString(),
     };
+    if (isDisqualified) {
+      basePayload.is_active = false;
+    }
 
-    const { error: updateError } = await supabase
-      .from("monday_com_deals")
-      .update(updatePayload)
-      .eq("id", request.dealId)
-      .select();
+    for (const deal of targetDeals) {
+      const { error: updateError } = await supabase
+        .from("monday_com_deals")
+        .update({
+          ...basePayload,
+          disposition_count: (deal.disposition_count ?? 0) + 1,
+        })
+        .eq("id", deal.id);
+      if (updateError) throw updateError;
+    }
 
-    if (updateError) console.log(updateError);
+    if (isDisqualified) {
+      const { error: unassignError } = await supabase
+        .from("retention_assigned_leads")
+        .delete()
+        .in("deal_id", targetDeals.map((d) => d.id))
+        .eq("status", "active");
 
-    // Insert into disposition_history
+      if (unassignError) throw unassignError;
+    }
+
+    const historyRows = targetDeals.map((deal) => ({
+      deal_id: deal.id,
+      monday_item_id: deal.monday_item_id ?? request.mondayItemId ?? null,
+      policy_number: deal.policy_number ?? request.policyNumber ?? null,
+      disposition: request.disposition,
+      disposition_notes: request.notes || null,
+      callback_datetime: request.callbackDatetime || null,
+      agent_id: request.agentId,
+      agent_name: request.agentName,
+      agent_type: request.agentType,
+      policy_status: request.policyStatus || null,
+      ghl_stage: request.ghlStage || null,
+      previous_disposition: deal.disposition || null,
+    }));
+
     const { error: historyError } = await supabase
       .from("disposition_history")
-      .insert({
-        deal_id: request.dealId,
-        monday_item_id: request.mondayItemId || null,
-        policy_number: request.policyNumber || null,
-        disposition: request.disposition,
-        disposition_notes: request.notes || null,
-        callback_datetime: request.callbackDatetime || null,
-        agent_id: request.agentId,
-        agent_name: request.agentName,
-        agent_type: request.agentType,
-        policy_status: request.policyStatus || null,
-        ghl_stage: request.ghlStage || null,
-        previous_disposition: previousDisposition,
-      });
+      .insert(historyRows);
 
-    if (historyError) console.log(historyError);
+    if (historyError) throw historyError;
 
     // Determine GHL action if disposition affects GHL
     let ghlAction: GHLAction | undefined;
@@ -88,7 +161,10 @@ export async function saveDisposition(
 
     return {
       success: true,
-      message: "Disposition saved successfully",
+      message:
+        isDisqualified && targetDeals.length > 1
+          ? `Disposition saved successfully for ${targetDeals.length} related policies`
+          : "Disposition saved successfully",
       ghlAction,
     };
   } catch (error) {

@@ -260,6 +260,8 @@ export function formatCurrency(value: unknown): string {
   return "—";
 }
 
+const MISSING_LEAD_NOTE_TEXT = "this lead was not available need to confirm with client";
+
 export function useAssignedLeadDetails() {
   const router = useRouter();
   const idParam = router.query.id;
@@ -308,6 +310,7 @@ export function useAssignedLeadDetails() {
   const [verificationItems, setVerificationItems] = useState<Array<Record<string, unknown>>>([]);
   const [verificationLoading, setVerificationLoading] = useState(false);
   const [verificationError, setVerificationError] = useState<string | null>(null);
+  const [creatingMissingLeadVerification, setCreatingMissingLeadVerification] = useState(false);
   const [verificationInputValues, setVerificationInputValues] = useState<Record<string, string>>({});
 
   const [assignedDealIds, setAssignedDealIds] = useState<number[]>([]);
@@ -2334,35 +2337,29 @@ export function useAssignedLeadDetails() {
     return map;
   }, [canonicalLeadRecord, lead, selectedPolicyView, fetchedDealData, fetchedLeadData, mondayDeals, allPersonalLeads]);
 
-  useEffect(() => {
-    const leadIdForVerification =
-      (lead && typeof lead["id"] === "string" ? (lead["id"] as string) : null) ??
-      (personalLead && typeof personalLead["id"] === "string" ? (personalLead["id"] as string) : null);
-
-    const dealIdForVerification =
-      selectedDeal && typeof selectedDeal.id === "number" && Number.isFinite(selectedDeal.id) ? selectedDeal.id : null;
-
-    if (!leadIdForVerification && dealIdForVerification == null) {
-      setVerificationSessionId(null);
-      setVerificationItems([]);
-      setVerificationLoading(false);
-      setVerificationError(null);
-      setVerificationInputValues({});
-      return;
-    }
-
-    let cancelled = false;
-    const run = async () => {
+  const loadVerificationPanel = useCallback(
+    async ({
+      leadIdForVerification,
+      dealIdForVerification,
+      createWhenNoMatch,
+    }: {
+      leadIdForVerification: string | null;
+      dealIdForVerification: number | null;
+      createWhenNoMatch: boolean;
+    }) => {
       setVerificationLoading(true);
       setVerificationError(null);
+      if (createWhenNoMatch) setCreatingMissingLeadVerification(true);
       try {
         const leadId = leadIdForVerification;
-
         if (leadId && !leadId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)) {
           throw new Error("Invalid leadId");
         }
-        const { data: { session }, error: sessErr } = await supabase.auth.getSession();
 
+        const {
+          data: { session },
+          error: sessErr,
+        } = await supabase.auth.getSession();
         if (sessErr) throw sessErr;
         const token = session?.access_token;
         if (!token) throw new Error("Not authenticated.");
@@ -2374,16 +2371,8 @@ export function useAssignedLeadDetails() {
           if (typeof dealId === "number" && Number.isFinite(dealId)) return `deal:${dealId}`;
           return selectedPolicyKey ? `policy:${selectedPolicyKey}` : "policy:unknown";
         })();
-
         const policyKeyForSession = policyNumber ?? fallbackPolicyKey;
-
         const autofillData = verificationAutofillByFieldName;
-        console.log("[assigned-lead-details] verification request", {
-          leadId: leadIdForVerification,
-          dealId: dealIdForVerification,
-          policyKey: policyKeyForSession,
-          callCenter: selectedPolicyView?.callCenter ?? null,
-        });
 
         const resp = await fetch("/api/verification-items", {
           method: "POST",
@@ -2397,6 +2386,8 @@ export function useAssignedLeadDetails() {
             policyKey: policyKeyForSession,
             callCenter: selectedPolicyView?.callCenter ?? null,
             autofill: autofillData,
+            createWhenNoMatch,
+            missingLeadNote: MISSING_LEAD_NOTE_TEXT,
           }),
         });
 
@@ -2412,14 +2403,6 @@ export function useAssignedLeadDetails() {
 
         const sessionId = (json as { ok: true; sessionId: string }).sessionId;
         const items = (json as { ok: true; items: Array<Record<string, unknown>> }).items;
-
-        console.log("[assigned-lead-details] verification response", {
-          sessionId,
-          itemCount: Array.isArray(items) ? items.length : 0,
-        });
-
-        if (cancelled) return;
-        
         setVerificationSessionId(sessionId);
         const rows = sortVerificationItems((items ?? []) as Array<Record<string, unknown>>);
         setVerificationItems(rows);
@@ -2431,10 +2414,7 @@ export function useAssignedLeadDetails() {
           const fieldName = typeof r["field_name"] === "string" ? (r["field_name"] as string) : "";
           const vv = typeof r["verified_value"] === "string" ? (r["verified_value"] as string) : null;
           const ov = typeof r["original_value"] === "string" ? (r["original_value"] as string) : null;
-          
-          // For monthly_premium and coverage_amount, always prefer our autofill value over original_value from database
-          // because these values should match what the policy card displays, which comes from selectedPolicyView
-          // The original_value might come from daily_deal_flow which could be from a different entry or outdated
+
           if (fieldName === "monthly_premium" || fieldName === "coverage_amount") {
             const autofill = verificationAutofillByFieldName[fieldName] || "";
             if (autofill && autofill.trim().length > 0) {
@@ -2442,7 +2422,7 @@ export function useAssignedLeadDetails() {
               continue;
             }
           }
-          
+
           const stored = (vv ?? ov ?? "").toString();
           if (stored.trim().length) {
             map[id] = stored;
@@ -2454,22 +2434,62 @@ export function useAssignedLeadDetails() {
         }
         setVerificationInputValues(map);
       } catch (e) {
-        if (cancelled) return;
         const msg = e instanceof Error ? e.message : "Failed to load verification panel.";
         setVerificationError(msg);
         setVerificationSessionId(null);
         setVerificationItems([]);
         setVerificationInputValues({});
+        throw e;
       } finally {
-        if (!cancelled) setVerificationLoading(false);
+        setVerificationLoading(false);
+        if (createWhenNoMatch) setCreatingMissingLeadVerification(false);
       }
-    };
+    },
+    [selectedPolicyView, selectedPolicyKey, verificationAutofillByFieldName],
+  );
 
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [lead, personalLead, selectedDeal, selectedPolicyKey, selectedPolicyView, verificationAutofillByFieldName]);
+  useEffect(() => {
+    const leadIdForVerification =
+      (lead && typeof lead["id"] === "string" ? (lead["id"] as string) : null) ??
+      (personalLead && typeof personalLead["id"] === "string" ? (personalLead["id"] as string) : null);
+    const dealIdForVerification =
+      selectedDeal && typeof selectedDeal.id === "number" && Number.isFinite(selectedDeal.id) ? selectedDeal.id : null;
+
+    if (!leadIdForVerification && dealIdForVerification == null) {
+      setVerificationSessionId(null);
+      setVerificationItems([]);
+      setVerificationLoading(false);
+      setVerificationError(null);
+      setVerificationInputValues({});
+      return;
+    }
+
+    void loadVerificationPanel({
+      leadIdForVerification,
+      dealIdForVerification,
+      createWhenNoMatch: false,
+    }).catch(() => {
+      return;
+    });
+  }, [lead, personalLead, selectedDeal, loadVerificationPanel]);
+
+  const createMissingLeadAndVerification = useCallback(async () => {
+    const leadIdForVerification =
+      (lead && typeof lead["id"] === "string" ? (lead["id"] as string) : null) ??
+      (personalLead && typeof personalLead["id"] === "string" ? (personalLead["id"] as string) : null);
+    const dealIdForVerification =
+      selectedDeal && typeof selectedDeal.id === "number" && Number.isFinite(selectedDeal.id) ? selectedDeal.id : null;
+
+    if (!leadIdForVerification && dealIdForVerification == null) {
+      throw new Error("leadId or dealId is required");
+    }
+
+    await loadVerificationPanel({
+      leadIdForVerification,
+      dealIdForVerification,
+      createWhenNoMatch: true,
+    });
+  }, [lead, personalLead, selectedDeal, loadVerificationPanel]);
 
   const touchVerificationSession = async () => {
     if (!verificationSessionId) return;
@@ -2630,9 +2650,11 @@ export function useAssignedLeadDetails() {
     verificationItems,
     verificationLoading,
     verificationError,
+    creatingMissingLeadVerification,
     verificationInputValues,
     toggleVerificationItem,
     updateVerificationItemValue,
+    createMissingLeadAndVerification,
     assignedDealsLoading,
     previousAssignedDealId,
     nextAssignedDealId,
