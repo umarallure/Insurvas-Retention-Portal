@@ -1040,6 +1040,8 @@ export function useAssignedLeadDetails() {
     }
   }, [dealId, navDealIdToPrimaryDealId, router, assignedDealsLoading]);
 
+  //text
+
   useEffect(() => {
     const requestId = navRequestIdRef.current;
     if (selectedDeal) {
