@@ -29,6 +29,7 @@ type VerificationPanelProps = {
     carrier?: string | null;
     agentName?: string | null;
   } | null;
+  dealPhone?: string | null;
   loading: boolean;
   error: string | null;
   verificationItems: Array<Record<string, unknown>>;
@@ -41,6 +42,7 @@ type VerificationPanelProps = {
 
 export function VerificationPanel({
   selectedPolicyView,
+  dealPhone,
   loading,
   error,
   verificationItems,
@@ -58,9 +60,12 @@ export function VerificationPanel({
   const [dncCheckingItemId, setDncCheckingItemId] = React.useState<string | null>(null);
   const [showDncModal, setShowDncModal] = React.useState(false);
   const [pendingPhoneVerification, setPendingPhoneVerification] = React.useState<string | null>(null);
+  const [pendingPhoneDisplay, setPendingPhoneDisplay] = React.useState<string | null>(null);
   const [phoneDncStatusByItem, setPhoneDncStatusByItem] = React.useState<Record<string, "clear" | "dnc" | "tcpa">>({});
   const [phoneDncStatus, setPhoneDncStatus] = React.useState<"clear" | "dnc" | "tcpa" | null>(null);
   const [dncMessage, setDncMessage] = React.useState<string | null>(null);
+  const autoCheckedPhoneKeyRef = React.useRef<string | null>(null);
+  const [autoCheckPending, setAutoCheckPending] = React.useState(true);
 
   const [underwritingData, setUnderwritingData] = React.useState({
     tobaccoLast12Months: "" as "yes" | "no" | "",
@@ -102,13 +107,25 @@ export function VerificationPanel({
 
   const cleanMoney = (v: string) => v.replace(/\$/g, "").replace(/,/g, "").trim();
 
-  const checkDnc = async (itemId: string) => {
+  const getPhoneValueForDnc = React.useCallback(
+    (itemId: string, item?: Record<string, unknown>) => {
+      const mondayPhone = typeof dealPhone === "string" ? dealPhone.trim() : "";
+      if (mondayPhone && mondayPhone !== "-") return mondayPhone;
+
+      return (
+        verificationInputValues[itemId] ??
+        (item && typeof item.verified_value === "string" ? item.verified_value : "") ??
+        (item && typeof item.original_value === "string" ? item.original_value : "") ??
+        ""
+      );
+    },
+    [dealPhone, verificationInputValues],
+  );
+
+  const checkDnc = async (itemId: string, options?: { autoTrigger?: boolean }) => {
+    const autoTrigger = options?.autoTrigger ?? false;
     const item = verificationItems.find((i) => i.id === itemId);
-    const phoneValue =
-      verificationInputValues[itemId] ??
-      (item && typeof item.verified_value === "string" ? item.verified_value : "") ??
-      (item && typeof item.original_value === "string" ? item.original_value : "") ??
-      "";
+    const phoneValue = getPhoneValueForDnc(itemId, item);
 
     const cleanPhone = phoneValue.replace(/\D/g, "");
     const normalizedPhone = cleanPhone.length > 10 ? cleanPhone.slice(-10) : cleanPhone;
@@ -123,9 +140,13 @@ export function VerificationPanel({
 
     setDncCheckingItemId(itemId);
     try {
-      const [blacklistResult, dncResult] = await Promise.allSettled([
+      const [blacklistResult, transferCheckResult] = await Promise.allSettled([
         supabase.functions.invoke("blacklist-check", { body: { mobileNumber: normalizedPhone } }),
-        supabase.functions.invoke("dnc-check", { body: { mobileNumber: normalizedPhone } }),
+        fetch("https://livetransferchecker.vercel.app/api/transfer-check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ phone: normalizedPhone }),
+        }),
       ]);
 
       const payloads: Array<Record<string, unknown>> = [];
@@ -169,15 +190,31 @@ export function VerificationPanel({
         checkErrors.push(`blacklist-check: ${blacklistResult.reason instanceof Error ? blacklistResult.reason.message : "unknown error"}`);
       }
 
-      if (dncResult.status === "fulfilled") {
-        const { data, error } = dncResult.value;
-        if (error) {
-          checkErrors.push(`dnc-check: ${error.message || "unknown error"}`);
-        } else {
-          payloads.push(...collectPayloadCandidates(data));
+      let transferCheckPayload: Record<string, unknown> | null = null;
+      if (transferCheckResult.status === "fulfilled") {
+        try {
+          const transferResponse = transferCheckResult.value;
+          const transferJson = (await transferResponse.json()) as unknown;
+          const parsedTransfer = asRecord(transferJson);
+          if (!transferResponse.ok) {
+            const message =
+              parsedTransfer && typeof parsedTransfer.message === "string"
+                ? parsedTransfer.message
+                : `status ${transferResponse.status}`;
+            checkErrors.push(`transfer-check: ${message}`);
+          } else if (parsedTransfer) {
+            transferCheckPayload = parsedTransfer;
+            payloads.push(...collectPayloadCandidates(parsedTransfer));
+          }
+        } catch (error) {
+          checkErrors.push(
+            `transfer-check: ${error instanceof Error ? error.message : "unable to parse response"}`,
+          );
         }
       } else {
-        checkErrors.push(`dnc-check: ${dncResult.reason instanceof Error ? dncResult.reason.message : "unknown error"}`);
+        checkErrors.push(
+          `transfer-check: ${transferCheckResult.reason instanceof Error ? transferCheckResult.reason.message : "unknown error"}`,
+        );
       }
 
       if (payloads.length === 0) {
@@ -216,12 +253,39 @@ export function VerificationPanel({
       const isDncFromNormalized = payloads.some((payload) => payload?.is_dnc === true);
       const isDncFromLists = payloads.some((payload) => listIncludes(payload?.federal_dnc) || listIncludes(payload?.dnc));
       const isTcpaFromLists = payloads.some((payload) => tcpaLitigatorIncludes(payload?.tcpa_litigator));
+      const hasTcpaPhrase = (value: unknown) => {
+        if (typeof value !== "string") return false;
+        const msg = value.toLowerCase();
+        return (
+          msg.includes("tcpa") ||
+          msg.includes("litigator") ||
+          msg.includes("no contact permitted") ||
+          msg.includes("do not proceed")
+        );
+      };
       const isTcpaFromMessage = payloads.some((payload) => {
-        const msg = typeof payload?.message === "string" ? payload.message.toLowerCase() : "";
-        return msg.includes("tcpa") || msg.includes("litigator");
+        const nestedDnc = asRecord(payload?.dnc);
+        return (
+          hasTcpaPhrase(payload?.message) ||
+          hasTcpaPhrase(payload?.upstream_message) ||
+          hasTcpaPhrase(payload?.warningMessage) ||
+          hasTcpaPhrase(payload?.dnc_message) ||
+          hasTcpaPhrase(nestedDnc?.message)
+        );
       });
+      const transferDnc = asRecord(transferCheckPayload?.dnc);
+      const transferData = asRecord(transferCheckPayload?.data);
+      const transferPolicyStatus =
+        transferData && typeof transferData["Policy Status"] === "string"
+          ? transferData["Policy Status"].toLowerCase()
+          : "";
+      const isDQFromTransfer =
+        transferPolicyStatus.includes("dq") ||
+        transferPolicyStatus.includes("disqualified") ||
+        transferPolicyStatus.includes("already been dq");
+      const isTcpaFromTransfer = hasTcpaPhrase(transferDnc?.message);
 
-      const isTcpa = isTcpaFromNormalized || isTcpaFromLists || isTcpaFromMessage;
+      const isTcpa = isTcpaFromNormalized || isTcpaFromLists || isTcpaFromMessage || isTcpaFromTransfer;
       const isDnc = isDncFromNormalized || isDncFromLists;
 
       const status: "clear" | "dnc" | "tcpa" = isTcpa ? "tcpa" : isDnc ? "dnc" : "clear";
@@ -231,22 +295,29 @@ export function VerificationPanel({
         ? normalizedMessage
         : isTcpa
         ? "WARNING: Do not proceed with this contact. This is TCPA."
+        : isDQFromTransfer
+          ? "Customer has already been disqualified from the agency."
         : isDnc
           ? "This number is on the DNC list. Proceed with verbal consent."
           : "This number is clear. Please verify consent with the customer.";
       const combinedMessage = checkErrors.length > 0 ? `${message} (One check failed: ${checkErrors.join(" | ")})` : message;
 
       setPhoneDncStatusByItem((prev) => ({ ...prev, [itemId]: status }));
-      setPhoneDncStatus(status);
-      setDncMessage(combinedMessage);
-      setPendingPhoneVerification(itemId);
-      setShowDncModal(true);
+      if (!autoTrigger || status === "tcpa") {
+        setPhoneDncStatus(status);
+        setDncMessage(combinedMessage);
+        setPendingPhoneVerification(itemId);
+        setPendingPhoneDisplay(phoneValue);
+        setShowDncModal(true);
+      }
 
-      toast({
-        title: status === "tcpa" ? "TCPA Warning" : status === "dnc" ? "DNC Warning" : "Phone Check Complete",
-        description: combinedMessage,
-        variant: status === "tcpa" ? "destructive" : "default",
-      });
+      if (!autoTrigger || status === "tcpa") {
+        toast({
+          title: status === "tcpa" ? "TCPA Warning" : status === "dnc" ? "DNC Warning" : "Phone Check Complete",
+          description: combinedMessage,
+          variant: status === "tcpa" ? "destructive" : "default",
+        });
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Unable to check DNC status.";
       toast({
@@ -268,6 +339,7 @@ export function VerificationPanel({
       });
     }
     setPendingPhoneVerification(null);
+    setPendingPhoneDisplay(null);
     setPhoneDncStatus(null);
     setDncMessage(null);
     setShowDncModal(false);
@@ -275,6 +347,7 @@ export function VerificationPanel({
 
   const handleDncModalCancel = () => {
     setPendingPhoneVerification(null);
+    setPendingPhoneDisplay(null);
     setPhoneDncStatus(null);
     setDncMessage(null);
     setShowDncModal(false);
@@ -334,6 +407,52 @@ export function VerificationPanel({
     setConditionInput("");
     setMedicationInput("");
   }, [showUnderwritingModal, getVerificationFieldValue]);
+
+  React.useEffect(() => {
+    autoCheckedPhoneKeyRef.current = null;
+    setAutoCheckPending(true);
+  }, [dealPhone, selectedPolicyView?.policyNumber]);
+
+  React.useEffect(() => {
+    if (dncCheckingItemId) return;
+    if (loading) return;
+    if (error || verificationItems.length === 0) {
+      setAutoCheckPending(false);
+      return;
+    }
+
+    const phoneItem = verificationItems.find(
+      (item) => typeof item.id === "string" && item.field_name === "phone_number",
+    );
+    if (!phoneItem || typeof phoneItem.id !== "string") {
+      setAutoCheckPending(false);
+      return;
+    }
+
+    const itemId = phoneItem.id;
+    const phoneValue = getPhoneValueForDnc(itemId, phoneItem);
+    const digits = phoneValue.replace(/\D/g, "");
+    const normalizedPhone = digits.length > 10 ? digits.slice(-10) : digits;
+    if (normalizedPhone.length !== 10) {
+      setAutoCheckPending(false);
+      return;
+    }
+
+    const phoneKey = `${itemId}:${normalizedPhone}`;
+    if (autoCheckedPhoneKeyRef.current === phoneKey) {
+      setAutoCheckPending(false);
+      return;
+    }
+
+    autoCheckedPhoneKeyRef.current = phoneKey;
+    void (async () => {
+      try {
+        await checkDnc(itemId, { autoTrigger: true });
+      } finally {
+        setAutoCheckPending(false);
+      }
+    })();
+  }, [loading, error, verificationItems, dncCheckingItemId, getPhoneValueForDnc]);
 
   const saveUnderwritingToVerification = () => {
     if (underwritingData.tobaccoLast12Months) {
@@ -762,9 +881,9 @@ export function VerificationPanel({
                 <p className="text-orange-600 text-lg font-bold mb-3">This number is on the Do Not Call list.</p>
               ) : null}
               <div className="bg-gray-50 p-6 rounded-lg border-2 border-gray-200 space-y-3">
-                <p className="text-lg font-medium">Is your phone number <span className="text-blue-600 font-bold">{pendingPhoneVerification ? verificationInputValues[pendingPhoneVerification] ?? "" : ""}</span> on the Federal, National or State Do Not Call List?</p>
+                <p className="text-lg font-medium">Is your phone number <span className="text-blue-600 font-bold">{pendingPhoneDisplay ?? ""}</span> on the Federal, National or State Do Not Call List?</p>
                 <p className="text-gray-500 text-sm">If a customer says no and we see it is on DNC, we still need verbal consent.</p>
-                <p className="text-lg font-medium">Sir/Ma'am, even if your phone number is on the Federal National or State Do Not Call list, do we still have your permission to call you and submit your application for insurance to <span className="text-blue-600 font-bold">{getVerificationFieldValue("carrier") || selectedPolicyView?.carrier || "selected carrier"}</span> via your phone number <span className="text-blue-600 font-bold">{pendingPhoneVerification ? verificationInputValues[pendingPhoneVerification] ?? "" : ""}</span>? And do we have your permission to call you on the same phone number in the future if needed?</p>
+                <p className="text-lg font-medium">Sir/Ma'am, even if your phone number is on the Federal National or State Do Not Call list, do we still have your permission to call you and submit your application for insurance to <span className="text-blue-600 font-bold">{getVerificationFieldValue("carrier") || selectedPolicyView?.carrier || "selected carrier"}</span> via your phone number <span className="text-blue-600 font-bold">{pendingPhoneDisplay ?? ""}</span>? And do we have your permission to call you on the same phone number in the future if needed?</p>
                 <p className="text-base text-gray-600 font-semibold">Make sure you get a clear YES on it.</p>
               </div>
               {dncMessage ? <p className="mt-3 text-sm text-muted-foreground">{dncMessage}</p> : null}
@@ -783,6 +902,22 @@ export function VerificationPanel({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {dncCheckingItemId || autoCheckPending ? (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-lg border bg-background p-6 shadow-xl">
+            <div className="space-y-2 text-center">
+              <h3 className="text-lg font-semibold">Checking phone status</h3>
+              <p className="text-sm text-muted-foreground">
+                Please wait while we run transfer-check and DNC validation.
+              </p>
+            </div>
+            <div className="flex items-center justify-center pt-5">
+              <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </Card>
   );
 }

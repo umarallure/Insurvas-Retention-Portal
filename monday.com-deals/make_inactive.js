@@ -23,15 +23,26 @@ const path = require("path");
 
 const TABLE_NAME = "deals"; // adjust to your actual Supabase table name
 const DIR = __dirname;
-const INPUT_CSV = path.join(DIR, "missing_from_all_clean.csv");
+const DEFAULT_INPUT_CSV = fs.existsSync(path.join(DIR, "missing_from_all_clean.csv"))
+  ? path.join(DIR, "missing_from_all_clean.csv")
+  : path.join(DIR, "tcpa_rows.csv");
+const INPUT_CSV = (() => {
+  const idx = process.argv.indexOf("--input");
+  if (idx !== -1 && process.argv[idx + 1]) return path.resolve(process.argv[idx + 1]);
+  return DEFAULT_INPUT_CSV;
+})();
 const LIVE_MODE = process.argv.includes("--live");
 
 // Load env vars (support a local .env file without extra deps)
 loadDotEnv(path.join(DIR, ".env"));
 loadDotEnv(path.join(DIR, "../.env")); // also check project root
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY;
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_KEY =
+  process.env.SUPABASE_SERVICE_KEY ||
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_ANON_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -115,7 +126,7 @@ function sleep(ms) {
 (async () => {
   if (!fs.existsSync(INPUT_CSV)) {
     console.error(`❌ Input file not found: ${INPUT_CSV}`);
-    console.error("   Run compare_missing.js first to generate it.");
+    console.error("   Provide one with --input <path>, or run compare_missing.js to generate missing_from_all_clean.csv.");
     process.exit(1);
   }
 
@@ -124,11 +135,13 @@ function sleep(ms) {
   // Filter to only rows with a valid numeric ID
   const validRows = rows.filter((r) => /^\d+$/.test(String(r.id).trim()));
 
-  console.log(`📂 Loaded ${validRows.length} valid deal(s) from missing_from_all_clean.csv`);
+  console.log(`📂 Loaded ${validRows.length} valid deal(s) from ${path.relative(process.cwd(), INPUT_CSV)}`);
   console.log(`🔧 Mode: ${LIVE_MODE ? "⚡ LIVE — will PATCH Supabase" : "🔍 DRY RUN — no changes made"}`);
 
   if (LIVE_MODE && (!SUPABASE_URL || !SUPABASE_KEY)) {
-    console.error("\n❌ Missing env vars. Set SUPABASE_URL and SUPABASE_SERVICE_KEY.");
+    console.error(
+      "\n❌ Missing env vars. Set SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) and SUPABASE_SERVICE_KEY (or SUPABASE_SERVICE_ROLE_KEY)."
+    );
     process.exit(1);
   }
 
