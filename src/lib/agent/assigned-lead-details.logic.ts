@@ -1230,8 +1230,7 @@ export function useAssignedLeadDetails() {
     getString(dealFallback, "ghl_name") ??
     getString(dealFallback, "deal_name") ??
     "Unknown";
-  const phone =
-    getString(canonicalLeadRecord, "phone_number") ?? getString(dealFallback, "phone_number") ?? "-";
+  const phone = getString(dealFallback, "phone_number") ?? "-";
   const email = getString(canonicalLeadRecord, "email") ?? "-";
   const policyNumber = getString(canonicalLeadRecord, "policy_number") ?? "-";
   const carrier = getString(canonicalLeadRecord, "carrier") ?? getString(dealFallback, "carrier") ?? "-";

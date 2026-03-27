@@ -293,6 +293,7 @@ export default function AssignedLeadDetailsPage() {
                 <div className="space-y-4">
                 <VerificationPanel
                   selectedPolicyView={selectedPolicyView}
+                  dealPhone={phone}
                   loading={verificationLoading}
                   error={verificationError}
                   creatingMissingLeadVerification={creatingMissingLeadVerification}
