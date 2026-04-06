@@ -754,6 +754,9 @@ export default function AssignedLeadsPage() {
                                   </span>
                                 ) : null}
                               </div>
+
+
+                              {/* TODO: Add phone column back in */}
                               {/* Phone column hidden
                               <div className="truncate font-mono text-xs" title={(row.lead?.phone_number ?? row.deal?.phone_number) ?? undefined}>
                                 {(() => {
