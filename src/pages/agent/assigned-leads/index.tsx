@@ -603,9 +603,9 @@ export default function AssignedLeadsPage() {
             </div>
 
             <div className="rounded-md border">
-              <div className="grid gap-3 p-3 text-sm font-medium text-muted-foreground" style={{ gridTemplateColumns: "2fr 1.2fr 1fr 1fr 0.9fr" }}>
+              <div className="grid gap-3 p-3 text-sm font-medium text-muted-foreground" style={{ gridTemplateColumns: "2fr 1fr 1fr 0.9fr" }}>
                 <div>GHL Name</div>
-                <div>Phone</div>
+                {/* <div>Phone</div> */}
                 <div>Carrier</div>
                 <div>Assigned</div>
                 <div className="text-right">Actions</div>
@@ -625,7 +625,7 @@ export default function AssignedLeadsPage() {
                   
                   return (
                     <React.Fragment key={group.name}>
-                      <div className="grid gap-3 p-3 text-sm items-center border-t" style={{ gridTemplateColumns: "2fr 1.2fr 1fr 1fr 0.9fr" }}>
+                      <div className="grid gap-3 p-3 text-sm items-center border-t" style={{ gridTemplateColumns: "2fr 1fr 1fr 0.9fr" }}>
                         <div className="flex items-center gap-2">
                           {group.isDuplicate ? (
                             <button
@@ -662,6 +662,7 @@ export default function AssignedLeadsPage() {
                             );
                           })()}
                         </div>
+                        {/* Phone column hidden
                         <div className="truncate font-mono text-xs" title={(primaryLead.lead?.phone_number ?? primaryLead.deal?.phone_number) ?? undefined}>
                           {(() => {
                             const phone = primaryLead.lead?.phone_number ?? primaryLead.deal?.phone_number ?? "";
@@ -674,6 +675,7 @@ export default function AssignedLeadsPage() {
                             return phone;
                           })()}
                         </div>
+                        */}
                         <div className="truncate" title={(primaryLead.lead?.carrier ?? primaryLead.deal?.carrier) ?? undefined}>
                           {primaryLead.lead?.carrier ?? primaryLead.deal?.carrier ?? <span className="text-muted-foreground">—</span>}
                         </div>
@@ -737,7 +739,7 @@ export default function AssignedLeadsPage() {
                           const style = getDealLabelStyle(label);
                           
                           return (
-                            <div key={row.id} className="grid gap-3 p-3 text-sm items-center border-t bg-muted/30" style={{ gridTemplateColumns: "2fr 1.2fr 1fr 1fr 0.9fr" }}>
+                            <div key={row.id} className="grid gap-3 p-3 text-sm items-center border-t bg-muted/30" style={{ gridTemplateColumns: "2fr 1fr 1fr 0.9fr" }}>
                               <div className="flex items-center gap-2">
                                 <div className="w-5" />
                                 <div className="truncate" title={duplicateGhlName}>
@@ -752,6 +754,7 @@ export default function AssignedLeadsPage() {
                                   </span>
                                 ) : null}
                               </div>
+                              {/* Phone column hidden
                               <div className="truncate font-mono text-xs" title={(row.lead?.phone_number ?? row.deal?.phone_number) ?? undefined}>
                                 {(() => {
                                   const phone = row.lead?.phone_number ?? row.deal?.phone_number ?? "";
@@ -764,6 +767,7 @@ export default function AssignedLeadsPage() {
                                   return phone;
                                 })()}
                               </div>
+                              */}
                               <div className="truncate" title={(row.lead?.carrier ?? row.deal?.carrier) ?? undefined}>
                                 {row.lead?.carrier ?? row.deal?.carrier ?? <span className="text-muted-foreground">—</span>}
                               </div>
