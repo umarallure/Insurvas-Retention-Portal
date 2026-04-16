@@ -622,6 +622,7 @@ export default function AgentCallBackDealDetailsPage() {
                                 personalDob={personalDob}
                                 personalAddress1={personalAddress1}
                                 onCancelWorkflow={handleCancelWorkflow}
+                                callBackDealId={deal?.id ?? null}
                               />
                             ))}
                           </div>

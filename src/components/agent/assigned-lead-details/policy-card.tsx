@@ -4,7 +4,13 @@ import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { getDealLabelStyle, getDealTagLabelFromGhlStage, getPolicyStatusStyle } from "@/lib/monday-deal-category-tags";
 import { formatCurrency, formatValue } from "@/lib/agent/assigned-lead-details.logic";
-import { NewSaleWorkflow, FixedPaymentWorkflow, CarrierRequirementsWorkflow, type RetentionType } from "@/components/agent/retention-workflows";
+import {
+  NewSaleWorkflow,
+  FixedPaymentWorkflow,
+  CarrierRequirementsWorkflow,
+  type RetentionType,
+  type NewSaleQuoteDetails,
+} from "@/components/agent/retention-workflows";
 
 type PolicyView = {
   key: string;
@@ -40,6 +46,8 @@ type PolicyCardProps = {
   personalDob: string;
   personalAddress1: string;
   onCancelWorkflow: () => void;
+  onNewSaleAfterSubmit?: (quote: NewSaleQuoteDetails) => Promise<void> | void;
+  callBackDealId?: string | null;
 };
 
 export function PolicyCard({
@@ -61,6 +69,8 @@ export function PolicyCard({
   personalDob,
   personalAddress1,
   onCancelWorkflow,
+  onNewSaleAfterSubmit,
+  callBackDealId,
 }: PolicyCardProps) {
   const rawStage =
     policy.raw && typeof (policy.raw as { ghl_stage?: unknown }).ghl_stage === "string"
@@ -326,7 +336,9 @@ export function PolicyCard({
                   verificationSessionId={verificationSessionId}
                   customerName={policy.clientName}
                   submissionId={typeof lead?.submission_id === "string" ? lead.submission_id : null}
+                  callBackDealId={callBackDealId ?? null}
                   onCancel={onCancelWorkflow}
+                  onAfterSubmit={onNewSaleAfterSubmit}
                 />
               ) : activeWorkflowType === "fixed_payment" ? (
                 <FixedPaymentWorkflow deal={deal} leadInfo={leadInfo} lead={lead} retentionAgent={retentionAgent} onCancel={onCancelWorkflow} />
