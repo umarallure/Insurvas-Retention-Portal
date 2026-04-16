@@ -170,6 +170,13 @@ export function AppSidebar() {
                       </Link>
                     </SidebarMenuSubButton>
                   </SidebarMenuSubItem>
+                  <SidebarMenuSubItem>
+                    <SidebarMenuSubButton asChild isActive={isActive("/agent/call-back-deals")}>
+                      <Link href="/agent/call-back-deals">
+                        <span>Call Back Deals</span>
+                      </Link>
+                    </SidebarMenuSubButton>
+                  </SidebarMenuSubItem>
                 </SidebarMenuSub>
               ) : null}
             </SidebarMenuItem>
@@ -212,6 +219,13 @@ export function AppSidebar() {
                     <SidebarMenuSubButton asChild isActive={isActive("/manager/assign-lead")}>
                       <Link href="/manager/assign-lead">
                         <span>Assign Leads</span>
+                      </Link>
+                    </SidebarMenuSubButton>
+                  </SidebarMenuSubItem>
+                  <SidebarMenuSubItem>
+                    <SidebarMenuSubButton asChild isActive={isActive("/manager/call-back-deals")}>
+                      <Link href="/manager/call-back-deals">
+                        <span>Call Back Deals</span>
                       </Link>
                     </SidebarMenuSubButton>
                   </SidebarMenuSubItem>
