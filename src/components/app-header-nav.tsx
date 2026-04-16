@@ -114,6 +114,7 @@ export function AppHeaderNav() {
                 isActive={isActive("/agent") && !isActive("/agent/dialer")}
               items={[
                 { href: "/agent/assigned-leads", label: "Assigned Leads" },
+                { href: "/agent/call-back-deals", label: "Call Back Deals" },
                 { href: "/agent/daily-retention-fixes", label: "Daily Retention Fixes" },
               ]}
             />
@@ -129,6 +130,7 @@ export function AppHeaderNav() {
                 { href: "/manager/retention-daily-deal-flow", label: "Retention Deal Flow" },
                 { href: "/non-retention-leads", label: "Non Retention Leads" },
                 { href: "/manager/assign-lead", label: "Assign Leads" },
+                { href: "/manager/call-back-deals", label: "Call Back Deals" },
                 { href: "/manager/fixed-policies", label: "Fixed Policies" },
                 { href: "/manager/agent-report-card", label: "Agent Report Card" },
                 { href: "/manager/usermanagnent", label: "User Management" },
