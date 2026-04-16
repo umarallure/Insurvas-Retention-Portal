@@ -261,6 +261,50 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(400).json({ ok: false, error: "Unable to determine verificationSessionId for this handoff." });
     }
 
+    const dailyFlowDate = new Date().toISOString().slice(0, 10);
+    const dailyDealFlowMinimal = {
+      submission_id: handoffSubmissionId,
+      date: dailyFlowDate,
+      client_phone_number: phoneNumber.trim().length > 0 ? phoneNumber.trim() : null,
+      lead_vendor: callCenter.trim().length > 0 ? callCenter.trim() : null,
+      insured_name: customerName.trim().length > 0 ? customerName.trim() : null,
+      retention_agent: bufferAgentName.trim().length > 0 ? bufferAgentName.trim() : null,
+      retention_agent_id: userData.user.id,
+    };
+
+    const { error: dailyInsertErr } = await supabaseAdmin.from("daily_deal_flow").insert(dailyDealFlowMinimal);
+
+    if (dailyInsertErr) {
+      const isDuplicate =
+        typeof dailyInsertErr === "object" &&
+        dailyInsertErr !== null &&
+        "code" in dailyInsertErr &&
+        (dailyInsertErr as { code?: string }).code === "23505";
+
+      if (isDuplicate) {
+        const { error: dailyUpdateErr } = await supabaseAdmin
+          .from("daily_deal_flow")
+          .update({
+            client_phone_number: dailyDealFlowMinimal.client_phone_number,
+            lead_vendor: dailyDealFlowMinimal.lead_vendor,
+            insured_name: dailyDealFlowMinimal.insured_name,
+            retention_agent: dailyDealFlowMinimal.retention_agent,
+            retention_agent_id: dailyDealFlowMinimal.retention_agent_id,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("submission_id", handoffSubmissionId)
+          .eq("date", dailyFlowDate);
+
+        if (dailyUpdateErr) {
+          console.error("[retention-call-notification] daily_deal_flow update error", dailyUpdateErr);
+          return res.status(500).json({ ok: false, error: dailyUpdateErr.message });
+        }
+      } else {
+        console.error("[retention-call-notification] daily_deal_flow insert error", dailyInsertErr);
+        return res.status(500).json({ ok: false, error: dailyInsertErr.message });
+      }
+    }
+
     const quoteDetails = body.quoteDetails && typeof body.quoteDetails === "object" ? body.quoteDetails : {};
     const rawCoverage = typeof quoteDetails.coverage === "string" ? quoteDetails.coverage.trim() : "";
     const rawPremium = typeof quoteDetails.monthlyPremium === "string" ? quoteDetails.monthlyPremium.trim() : "";
