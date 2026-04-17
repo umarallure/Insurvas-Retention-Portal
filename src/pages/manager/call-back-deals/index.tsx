@@ -14,6 +14,7 @@ import { FilterIcon, Loader2, RefreshCwIcon, ShieldAlertIcon } from "lucide-reac
 
 import { assignCallBackDeal, unassignCallBackDeal } from "@/lib/call-back-deals/assign";
 import { CallBackBulkAssignModal } from "@/components/manager/call-back-deals/bulk-assign-modal";
+import { CallBackBulkUnassignModal } from "@/components/manager/call-back-deals/bulk-unassign-modal";
 
 type CallBackDealRow = {
   id: string;
@@ -80,6 +81,7 @@ export default function ManagerCallBackDealsPage() {
   const [saving, setSaving] = useState(false);
 
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkUnassignOpen, setBulkUnassignOpen] = useState(false);
 
   const [unassignOpen, setUnassignOpen] = useState(false);
   const [unassigning, setUnassigning] = useState(false);
@@ -140,11 +142,31 @@ export default function ManagerCallBackDealsPage() {
         .eq("assigned", true);
 
       const byAgent: Record<string, number> = {};
+      const agentIds = new Set<string>();
       if (assignedRowsResult.data) {
         (assignedRowsResult.data as Array<{ assigned_to_profile_id: string | null }>).forEach((row) => {
           if (row.assigned_to_profile_id) {
             byAgent[row.assigned_to_profile_id] = (byAgent[row.assigned_to_profile_id] || 0) + 1;
+            agentIds.add(row.assigned_to_profile_id);
           }
+        });
+      }
+
+      // Load agent names for the stats display
+      if (agentIds.size > 0) {
+        const { data: profileRows } = await supabase
+          .from("profiles")
+          .select("id, display_name")
+          .in("id", Array.from(agentIds));
+
+        const nameById = new Map<string, string>();
+        for (const p of (profileRows ?? []) as Array<{ id: string; display_name: string | null }>) {
+          nameById.set(p.id, p.display_name ?? "Unknown");
+        }
+        setAssigneeNameById((prev) => {
+          const updated = new Map(prev);
+          nameById.forEach((name, id) => updated.set(id, name));
+          return updated;
         });
       }
 
@@ -478,6 +500,14 @@ export default function ManagerCallBackDealsPage() {
               >
                 Bulk Assign
               </Button>
+
+              <Button
+                variant="outline"
+                onClick={() => setBulkUnassignOpen(true)}
+                disabled={syncing || loading}
+              >
+                Bulk Unassign
+              </Button>
             </div>
 
             <div className="rounded-md border">
@@ -681,6 +711,15 @@ export default function ManagerCallBackDealsPage() {
         open={bulkOpen}
         onOpenChange={setBulkOpen}
         agents={agents}
+        onCompleted={() => {
+          void loadRows();
+          void loadStats();
+        }}
+      />
+
+      <CallBackBulkUnassignModal
+        open={bulkUnassignOpen}
+        onOpenChange={setBulkUnassignOpen}
         onCompleted={() => {
           void loadRows();
           void loadStats();

@@ -317,9 +317,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         ? body.updateCallResultUrl
         : `${portalBaseUrl}/call-result-update?submissionId=${encodeURIComponent(handoffSubmissionId)}`;
 
-    // `retention_deal_flow` / session updates above still run; edge notify is commented off below.
+    // `retention_deal_flow` / session updates above still run; edge notify below.
 
-    /* Supabase edge function `retention-call-notification` — re-enable when ready.
     const functionResponse = await fetch(getFunctionsUrl(), {
       method: "POST",
       headers: {
@@ -361,13 +360,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       ok: true,
       notificationId: functionJson.notificationId ?? null,
       messageTs: functionJson.messageTs ?? null,
-    });
-    */
-
-    return res.status(200).json({
-      ok: true,
-      notificationId: null,
-      messageTs: null,
     });
   } catch (error) {
     return res.status(500).json({
