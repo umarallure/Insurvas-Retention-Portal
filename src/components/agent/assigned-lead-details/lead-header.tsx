@@ -22,6 +22,8 @@ type LeadHeaderProps = {
   onOpenDisposition: () => void;
   /** Call-back deal details: prev/next use UUIDs instead of Monday deal ids. */
   callBackNavigation?: { previousId: string | null; nextId: string | null } | null;
+  /** Hide the Go to Dialer button (used for call back deal details page) */
+  hideGoToDialer?: boolean;
 };
 
 export function LeadHeader({
@@ -39,6 +41,7 @@ export function LeadHeader({
   onNextLead,
   onOpenDisposition,
   callBackNavigation,
+  hideGoToDialer = false,
 }: LeadHeaderProps) {
   const previousDisabled =
     assignedDealsLoading ||
@@ -81,18 +84,19 @@ export function LeadHeader({
           </CardDescription>
         </div>
         <div className="flex shrink-0 gap-2">
-          {/* Return to Dialer button - prominent for agents */}
-          <Button
-            type="button"
-            variant="default"
-            size="sm"
-            className="gap-1.5 bg-green-600 hover:bg-green-700"
-            onClick={handleReturnToDialer}
-          >
-            <PhoneIcon className="h-4 w-4" />
-            {canCloseTab ? "Done - Return to Dialer" : "Go to Dialer"}
-          </Button>
-          <QuickDispositionButton onClick={onOpenDisposition} disabled={!selectedPolicyView || !dealId} />
+          {!hideGoToDialer && (
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              className="gap-1.5 bg-green-600 hover:bg-green-700"
+              onClick={handleReturnToDialer}
+            >
+              <PhoneIcon className="h-4 w-4" />
+              {canCloseTab ? "Done - Return to Dialer" : "Go to Dialer"}
+            </Button>
+          )}
+          <QuickDispositionButton onClick={onOpenDisposition} disabled={!selectedPolicyView && !dealId && !callBackNavigation} />
           <Button
             type="button"
             variant="outline"

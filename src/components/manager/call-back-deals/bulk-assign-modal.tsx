@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { Loader2, Plus, X } from "lucide-react";
@@ -44,6 +45,13 @@ type AllocationRowState = {
   percent: number;
   count: number;
 };
+
+const STAGE_OPTIONS = [
+  "Incomplete Transfer",
+  "Application Withdrawn",
+  "Needs BPO Callback",
+  "Declined Underwriting",
+];
 
 function CountAllocationRow(props: {
   value: AllocationRowState;
@@ -120,6 +128,7 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
 
   const [loadingPool, setLoadingPool] = React.useState(false);
   const [pool, setPool] = React.useState<CallBackDealRow[]>([]);
+  const [stageFilter, setStageFilter] = React.useState<string[]>([]);
 
   const [mode, setMode] = React.useState<AllocationMode>("percent");
 
@@ -139,16 +148,40 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
   const loadPool = React.useCallback(async () => {
     setLoadingPool(true);
     try {
-      const { data, error } = await supabase
+      let baseQuery = supabase
         .from("call_back_deals")
-        .select("id, name, phone_number, submission_id")
+        .select("id, name, phone_number, submission_id", { count: "exact" })
         .eq("is_active", true)
         .eq("assigned", false)
-        .order("last_synced_at", { ascending: false, nullsFirst: false })
-        .limit(5000);
+        .order("last_synced_at", { ascending: false, nullsFirst: false });
 
-      if (error) throw error;
-      setPool((data ?? []) as CallBackDealRow[]);
+      if (stageFilter.length > 0) {
+        baseQuery = baseQuery.in("stage", stageFilter);
+      }
+
+      const PAGE_SIZE = 1000;
+      const allData: CallBackDealRow[] = [];
+      let from = 0;
+      let totalCount = 0;
+
+      while (true) {
+        const { data, error, count } = await baseQuery.range(from, from + PAGE_SIZE - 1);
+
+        if (error) throw error;
+
+        if (count !== null && totalCount === 0) {
+          totalCount = count;
+        }
+
+        allData.push(...((data ?? []) as CallBackDealRow[]));
+
+        if ((data ?? []).length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+
+        if (allData.length >= totalCount && totalCount > 0) break;
+      }
+
+      setPool(allData);
     } catch (error) {
       console.error("[cbd-bulk-assign] pool error", error);
       toastRef.current({
@@ -160,15 +193,20 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
     } finally {
       setLoadingPool(false);
     }
-  }, []);
+  }, [stageFilter]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    setStageFilter([]);
+    setMode("percent");
+    setAllocations([{ agentId: "", percent: 100, count: 0 }]);
+    setProgress({ done: 0, total: 0, assigned: 0, tcpa: 0, failed: 0 });
+  }, [open]);
 
   React.useEffect(() => {
     if (!open) return;
     void loadPool();
-    setMode("percent");
-    setAllocations([{ agentId: "", percent: 100, count: 0 }]);
-    setProgress({ done: 0, total: 0, assigned: 0, tcpa: 0, failed: 0 });
-  }, [open, loadPool]);
+  }, [open, stageFilter, loadPool]);
 
   const totalCount = React.useMemo(
     () => allocations.reduce((acc, a) => acc + (Number.isFinite(a.count) ? Math.max(0, Math.floor(a.count)) : 0), 0),
@@ -332,6 +370,21 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
           <div className="text-sm text-muted-foreground">
             Pool: {loadingPool ? "loading…" : `${pool.length} active, unassigned call back deals`}. TCPA will be
             checked per deal before assignment; flagged deals will be marked inactive and skipped.
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium">Filter by Stage:</span>
+            <MultiSelect
+              options={STAGE_OPTIONS}
+              selected={stageFilter}
+              onChange={(selected) => {
+                setStageFilter(selected);
+              }}
+              placeholder="All Stages"
+              className="w-full lg:w-[300px]"
+              showAllOption={true}
+              allOptionLabel="All Stages"
+            />
           </div>
 
           <Separator />

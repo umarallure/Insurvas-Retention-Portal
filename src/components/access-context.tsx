@@ -12,6 +12,8 @@ type AccessState = {
   profileId: string | null;
   isAgent: boolean;
   isManager: boolean;
+  managerId: string | null;
+  allowedPages: string[];
 };
 
 type AccessContextValue = {
@@ -26,6 +28,8 @@ const defaultAccess: AccessState = {
   profileId: null,
   isAgent: false,
   isManager: false,
+  managerId: null,
+  allowedPages: [],
 };
 
 export function getAccessLevel(access: AccessState): AccessLevel {
@@ -39,37 +43,46 @@ export function isRouteAllowed(pathname: string, access: AccessState): boolean {
   const level = getAccessLevel(access);
   if (level === "unknown") return false;
 
-  // Users with no role should not have access to any pages (except login, which is handled in _app.tsx)
   if (level === "none") return false;
 
-  // Landing route is always allowed (will redirect to appropriate page)
   if (pathname === "/landing") return true;
-  
-  // Home page "/" is accessible to both managers and agents (they see different dashboards)
+
   if (pathname === "/") {
     return level === "manager" || level === "agent";
   }
 
   if (pathname.startsWith("/settings")) return true;
-
-  // Keep inbox accessible for now.
   if (pathname.startsWith("/inbox")) return true;
 
-  if (pathname.startsWith("/customers")) return level === "manager";
-  if (pathname.startsWith("/manager")) return level === "manager";
+  if (pathname.startsWith("/manager") || pathname === "/customers" || pathname === "/non-retention-leads") {
+    if (level !== "manager") return false;
+    if (access.allowedPages.length === 0) return true;
+    return access.allowedPages.some(page => pathname.startsWith(page));
+  }
   if (pathname.startsWith("/agent")) return level === "agent";
 
-  // Default: allow other non-critical pages.
   return true;
 }
 
 export function getDefaultLandingPath(access: AccessState): string {
   const level = getAccessLevel(access);
+  if (level === "manager" && access.allowedPages.length > 0) {
+    return access.allowedPages[0];
+  }
   if (level === "manager") return "/customers";
-  if (level === "agent") return "/"; // Agents see their dashboard on home page
-  // For users with no role, redirect to settings (a safe page they can access)
+  if (level === "agent") return "/";
   return "/settings";
 }
+
+export const MANAGER_PAGES = [
+  { path: "/manager/retention-daily-deal-flow", label: "Retention Deal Flow" },
+  { path: "/manager/assign-lead", label: "Assign Leads" },
+  { path: "/manager/call-back-deals", label: "Call Back Deals" },
+  { path: "/manager/fixed-policies", label: "Fixed Policies" },
+  { path: "/manager/agent-report-card", label: "Agent Report Card" },
+  { path: "/manager/usermanagnent", label: "User Management" },
+  { path: "/manager/lead-email-ghl-notes", label: "Lead Email / Notes" },
+];
 
 export function AccessProvider({ children }: { children: React.ReactNode }) {
   const [access, setAccess] = React.useState<AccessState>(defaultAccess);
@@ -78,13 +91,11 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
   const accessLoadedRef = React.useRef(false);
 
   const refreshAccess = React.useCallback(async () => {
-    // Prevent duplicate refresh calls
     if (refreshingRef.current) {
       return;
     }
 
     try {
-      // First check session, then get user - this ensures session is established
       const {
         data: { session },
         error: sessionErr,
@@ -111,13 +122,11 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // If user hasn't changed and access is already loaded, skip refresh
       if (currentUserIdRef.current === user.id && accessLoadedRef.current) {
         console.log("[access-context] User unchanged, skipping refresh");
         return;
       }
 
-      // Start refresh - set loading state and mark as refreshing
       refreshingRef.current = true;
       currentUserIdRef.current = user.id;
       setAccess((prev) => ({ ...prev, loading: true }));
@@ -130,7 +139,7 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
 
       if (profileErr) {
         console.error("[access-context] Error fetching profile:", profileErr);
-        setAccess({ loading: false, profileId: null, isAgent: false, isManager: false });
+        setAccess({ loading: false, profileId: null, isAgent: false, isManager: false, managerId: null, allowedPages: [] });
         accessLoadedRef.current = false;
         refreshingRef.current = false;
         return;
@@ -138,7 +147,7 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
 
       if (!profile?.id) {
         console.log("[access-context] No profile found for user:", user.id);
-        setAccess({ loading: false, profileId: null, isAgent: false, isManager: false });
+        setAccess({ loading: false, profileId: null, isAgent: false, isManager: false, managerId: null, allowedPages: [] });
         accessLoadedRef.current = false;
         refreshingRef.current = false;
         return;
@@ -170,13 +179,28 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
 
       const isAgent = Boolean(agentRow);
       const isManager = Boolean(managerRow);
+      const managerId = managerRow?.id ?? null;
+
+      let allowedPages: string[] = [];
+      if (isManager && managerId) {
+        const { data: pageAccessData, error: pageAccessErr } = await supabase
+          .from("manager_page_access")
+          .select("page_path")
+          .eq("manager_id", managerId);
+
+        if (pageAccessErr) {
+          console.error("[access-context] Error fetching page access:", pageAccessErr);
+        } else {
+          allowedPages = (pageAccessData ?? []).map((r: { page_path: string }) => r.page_path);
+        }
+      }
 
       console.log("[access-context] Access check result:", {
         profileId,
         isAgent,
         isManager,
-        agentRow: agentRow?.id,
-        managerRow: managerRow?.id,
+        managerId,
+        allowedPages,
       });
 
       setAccess({
@@ -184,6 +208,8 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
         profileId,
         isAgent,
         isManager,
+        managerId,
+        allowedPages,
       });
       accessLoadedRef.current = true;
     } catch (error) {
@@ -198,22 +224,17 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     refreshAccess();
 
-    // Listen for auth state changes (login, logout, user updates)
-    // Note: We don't refresh on TOKEN_REFRESHED to prevent unnecessary reloads when switching tabs
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       console.log("[access-context] Auth state changed:", event, session?.user?.id);
       if (event === "SIGNED_IN" || event === "USER_UPDATED") {
-        // Refresh access when user signs in or user data is updated
         refreshAccess();
       } else if (event === "SIGNED_OUT") {
-        // Clear access when user signs out
         currentUserIdRef.current = null;
         accessLoadedRef.current = false;
         setAccess({ ...defaultAccess, loading: false });
       }
-      // TOKEN_REFRESHED is intentionally ignored to prevent reloads when switching tabs
     });
 
     return () => {
@@ -238,22 +259,17 @@ export function AccessGate({ pathname, children }: { pathname: string; children:
   const [isRedirecting, setIsRedirecting] = React.useState(false);
 
   React.useEffect(() => {
-    // Wait for access check to complete
     if (access.loading) {
       return;
     }
 
     const level = getAccessLevel(access);
 
-    // Users with no role should be signed out and redirected to login
-    // But only if we're not on the login page and access check has completed
     if (level === "none" && pathname !== "/login") {
       setIsRedirecting(true);
-      // Check if user actually has a session before signing out
       const checkAndSignOut = async () => {
         const { data: { session } } = await supabase.auth.getSession();
         if (session) {
-          // User has session but no role - sign them out
           console.log("[access-context] User has session but no role, signing out");
           await supabase.auth.signOut();
         }
@@ -263,7 +279,6 @@ export function AccessGate({ pathname, children }: { pathname: string; children:
       return;
     }
 
-    // Dedicated landing route: redirect users to their default page.
     if (pathname === "/landing") {
       const next = getDefaultLandingPath(access);
       setIsRedirecting(true);
@@ -271,7 +286,6 @@ export function AccessGate({ pathname, children }: { pathname: string; children:
       return;
     }
 
-    // Check if route is allowed
     const allowed = isRouteAllowed(pathname, access);
     if (!allowed) {
       const next = getDefaultLandingPath(access);
@@ -283,8 +297,6 @@ export function AccessGate({ pathname, children }: { pathname: string; children:
     setIsRedirecting(false);
   }, [access, pathname, router]);
 
-  // Show loading state while checking access
-  // Allow /landing route to show loading state (will redirect once access is determined)
   if (access.loading) {
     if (pathname === "/landing") {
       return (
@@ -293,7 +305,6 @@ export function AccessGate({ pathname, children }: { pathname: string; children:
         </div>
       );
     }
-    // For other routes, show loading while access is being determined
     return (
       <div className="w-full px-6 py-6 min-h-screen bg-muted/20 flex items-center justify-center">
         <div className="text-sm text-muted-foreground">Loading...</div>
@@ -301,7 +312,6 @@ export function AccessGate({ pathname, children }: { pathname: string; children:
     );
   }
 
-  // Show redirecting state
   if (isRedirecting) {
     return (
       <div className="w-full px-6 py-6 min-h-screen bg-muted/20 flex items-center justify-center">
@@ -310,7 +320,6 @@ export function AccessGate({ pathname, children }: { pathname: string; children:
     );
   }
 
-  // Final check - if route is not allowed, show redirecting (shouldn't happen due to effect above)
   if (!isRouteAllowed(pathname, access)) {
     return (
       <div className="w-full px-6 py-6 min-h-screen bg-muted/20 flex items-center justify-center">
