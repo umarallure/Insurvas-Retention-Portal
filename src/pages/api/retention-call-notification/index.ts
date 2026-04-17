@@ -115,13 +115,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(400).json({ ok: false, error: "policyNumber is required" });
     }
 
-    /** Monday / CRM submission id — used for retention_deal_flow, edge function, and URLs. */
+    /** Submission id for retention_deal_flow, URLs, and edge payload (from lead or Monday deal). */
     let handoffSubmissionId = "";
-    /**
-     * Portal `leads.submission_id` — verification_sessions FK requires this to exist on public.leads.
-     * For call-back deals this stays on the matched lead row; handoffSubmissionId may be the CRM id instead.
-     */
-    let sessionSubmissionId = "";
     let customerName = typeof body.customerName === "string" ? body.customerName.trim() : "";
     let callCenter = typeof body.callCenter === "string" ? body.callCenter.trim() : "";
     let phoneNumber = "";
@@ -138,7 +133,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
 
       const leadSid = typeof leadRow?.submission_id === "string" ? leadRow.submission_id.trim() : "";
-      sessionSubmissionId = leadSid;
       handoffSubmissionId = leadSid;
       customerName ||= typeof leadRow?.customer_full_name === "string" ? leadRow.customer_full_name.trim() : "";
       phoneNumber = typeof leadRow?.phone_number === "string" ? leadRow.phone_number.trim() : "";
@@ -159,7 +153,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const mondaySid =
         typeof dealRow?.monday_item_id === "string" ? dealRow.monday_item_id.trim() : "";
       handoffSubmissionId ||= mondaySid;
-      sessionSubmissionId ||= mondaySid;
       customerName ||=
         (typeof dealRow?.ghl_name === "string" ? dealRow.ghl_name.trim() : "") ||
         (typeof dealRow?.deal_name === "string" ? dealRow.deal_name.trim() : "");
@@ -178,31 +171,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(400).json({ ok: false, error: "Unable to determine submissionId for this handoff." });
     }
 
-    if (!sessionSubmissionId) {
-      const { data: leadByCrm, error: leadByCrmErr } = await supabaseAdmin
-        .from("leads")
-        .select("submission_id")
-        .eq("submission_id", handoffSubmissionId)
-        .limit(1)
-        .maybeSingle();
-
-      if (leadByCrmErr) {
-        return res.status(500).json({ ok: false, error: leadByCrmErr.message });
-      }
-
-      if (leadByCrm && typeof leadByCrm.submission_id === "string" && leadByCrm.submission_id.trim()) {
-        sessionSubmissionId = leadByCrm.submission_id.trim();
-      }
-    }
-
-    if (!sessionSubmissionId) {
-      return res.status(400).json({
-        ok: false,
-        error:
-          "Unable to resolve a portal lead submission id for verification session (required by database). Ensure this deal is linked to a retention lead.",
-      });
-    }
-
     const { data: profile, error: profileErr } = await supabaseAdmin
       .from("profiles")
       .select("id, display_name")
@@ -219,47 +187,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       (typeof body.retentionAgent === "string" ? body.retentionAgent.trim() : "") ||
       "Unknown Agent";
 
-    let verificationSessionId =
+    const verificationSessionId =
       typeof body.verificationSessionId === "string" ? body.verificationSessionId.trim() : "";
-
-    if (!verificationSessionId) {
-      const { data: verificationRow, error: verificationErr } = await supabaseAdmin
-        .from("verification_sessions")
-        .select("id")
-        .eq("submission_id", sessionSubmissionId)
-        .order("updated_at", { ascending: false, nullsFirst: false })
-        .order("created_at", { ascending: false, nullsFirst: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (verificationErr) {
-        return res.status(500).json({ ok: false, error: verificationErr.message });
-      }
-
-      verificationSessionId = typeof verificationRow?.id === "string" ? verificationRow.id : "";
-    }
-
-    if (!verificationSessionId) {
-      const { data: insertedSession, error: insertSessionErr } = await supabaseAdmin
-        .from("verification_sessions")
-        .insert({
-          submission_id: sessionSubmissionId,
-          status: "in_progress",
-          is_retention_call: true,
-        })
-        .select("id")
-        .maybeSingle();
-
-      if (insertSessionErr) {
-        return res.status(500).json({ ok: false, error: insertSessionErr.message });
-      }
-
-      verificationSessionId = typeof insertedSession?.id === "string" ? insertedSession.id : "";
-    }
-
-    if (!verificationSessionId) {
-      return res.status(400).json({ ok: false, error: "Unable to determine verificationSessionId for this handoff." });
-    }
 
     const dailyFlowDate = new Date().toISOString().slice(0, 10);
     const dailyDealFlowMinimal = {
@@ -363,13 +292,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const portalBaseUrl = getPortalBaseUrl(req);
-    const laReadyUrl = `${portalBaseUrl}/call-result-update?submissionId=${encodeURIComponent(
-      handoffSubmissionId,
-    )}&sessionId=${encodeURIComponent(verificationSessionId)}&policyNumber=${encodeURIComponent(
-      policyNumber,
-    )}&dealId=${encodeURIComponent(String(dealId ?? ""))}&leadId=${encodeURIComponent(
-      leadId,
-    )}`;
+    let laReadyUrl = `${portalBaseUrl}/call-result-update?submissionId=${encodeURIComponent(handoffSubmissionId)}`;
+    if (verificationSessionId) {
+      laReadyUrl += `&sessionId=${encodeURIComponent(verificationSessionId)}`;
+    }
+    laReadyUrl += `&policyNumber=${encodeURIComponent(policyNumber)}&dealId=${encodeURIComponent(
+      String(dealId ?? ""),
+    )}&leadId=${encodeURIComponent(leadId)}`;
     const updateCallResultUrl =
       typeof body.updateCallResultUrl === "string" && body.updateCallResultUrl.trim().length
         ? body.updateCallResultUrl
