@@ -38,6 +38,7 @@ type VerificationPanelProps = {
   onToggleVerification: (itemId: string, checked: boolean) => void;
   onUpdateValue: (itemId: string, value: string) => void;
   onCreateMissingLeadVerification?: () => Promise<void>;
+  disableTcpaCheck?: boolean;
 };
 
 export function VerificationPanel({
@@ -51,6 +52,7 @@ export function VerificationPanel({
   onToggleVerification,
   onUpdateValue,
   onCreateMissingLeadVerification,
+  disableTcpaCheck = false,
 }: VerificationPanelProps) {
   const { toast } = useToast();
   const [showUnderwritingModal, setShowUnderwritingModal] = React.useState(false);
@@ -123,6 +125,7 @@ export function VerificationPanel({
   );
 
   const checkDnc = async (itemId: string, options?: { autoTrigger?: boolean }) => {
+    if (disableTcpaCheck) return;
     const autoTrigger = options?.autoTrigger ?? false;
     const item = verificationItems.find((i) => i.id === itemId);
     const phoneValue = getPhoneValueForDnc(itemId, item);

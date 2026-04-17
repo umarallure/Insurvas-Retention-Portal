@@ -26,7 +26,7 @@ import {
 import { UserMenu } from "@/components/user-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useDashboard } from "@/components/dashboard-context";
-import { useAccess } from "@/components/access-context";
+import { useAccess, MANAGER_PAGES } from "@/components/access-context";
 import { cn } from "@/lib/utils";
 
 export function AppHeaderNav() {
@@ -91,7 +91,7 @@ export function AppHeaderNav() {
             label="Inbox"
           />
 
-          {canSeeCustomers && (
+          {canSeeCustomers && (access.allowedPages.length === 0 || access.allowedPages.some(p => p.startsWith("/customers"))) && (
             <NavLink
               href="/customers"
               isActive={isActive("/customers")}
@@ -126,16 +126,9 @@ export function AppHeaderNav() {
               label="Manager"
               icon={<ShieldIcon className="h-4 w-4" />}
               isActive={isActive("/manager")}
-              items={[
-                { href: "/manager/retention-daily-deal-flow", label: "Retention Deal Flow" },
-                { href: "/non-retention-leads", label: "Non Retention Leads" },
-                { href: "/manager/assign-lead", label: "Assign Leads" },
-                { href: "/manager/call-back-deals", label: "Call Back Deals" },
-                { href: "/manager/fixed-policies", label: "Fixed Policies" },
-                { href: "/manager/agent-report-card", label: "Agent Report Card" },
-                { href: "/manager/usermanagnent", label: "User Management" },
-                { href: "/manager/lead-email-ghl-notes", label: "Lead Email / Notes" },
-              ]}
+              items={MANAGER_PAGES
+                .filter(page => access.allowedPages.length === 0 || access.allowedPages.includes(page.path))
+                .map(page => ({ href: page.path, label: page.label }))}
             />
           )}
 

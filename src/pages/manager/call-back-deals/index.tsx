@@ -66,6 +66,14 @@ export default function ManagerCallBackDealsPage() {
   const [agents, setAgents] = useState<ProfileRow[]>([]);
   const [assigneeNameById, setAssigneeNameById] = useState<Map<string, string>>(new Map());
 
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [stats, setStats] = useState<{
+    total: number;
+    assigned: number;
+    unassigned: number;
+    byAgent: Record<string, number>;
+  }>({ total: 0, assigned: 0, unassigned: 0, byAgent: {} });
+
   const [modalOpen, setModalOpen] = useState(false);
   const [activeRow, setActiveRow] = useState<CallBackDealRow | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
@@ -115,6 +123,42 @@ export default function ManagerCallBackDealsPage() {
     }));
 
     setAgents(mapped);
+  }, []);
+
+  const loadStats = useCallback(async () => {
+    setStatsLoading(true);
+    try {
+      const [totalResult, assignedResult, unassignedResult] = await Promise.all([
+        supabase.from("call_back_deals").select("*", { count: "exact", head: true }),
+        supabase.from("call_back_deals").select("*", { count: "exact", head: true }).eq("assigned", true),
+        supabase.from("call_back_deals").select("*", { count: "exact", head: true }).eq("assigned", false),
+      ]);
+
+      const assignedRowsResult = await supabase
+        .from("call_back_deals")
+        .select("assigned_to_profile_id")
+        .eq("assigned", true);
+
+      const byAgent: Record<string, number> = {};
+      if (assignedRowsResult.data) {
+        (assignedRowsResult.data as Array<{ assigned_to_profile_id: string | null }>).forEach((row) => {
+          if (row.assigned_to_profile_id) {
+            byAgent[row.assigned_to_profile_id] = (byAgent[row.assigned_to_profile_id] || 0) + 1;
+          }
+        });
+      }
+
+      setStats({
+        total: totalResult.count ?? 0,
+        assigned: assignedResult.count ?? 0,
+        unassigned: unassignedResult.count ?? 0,
+        byAgent,
+      });
+    } catch (error) {
+      console.error("[manager-call-back-deals] loadStats error", error);
+    } finally {
+      setStatsLoading(false);
+    }
   }, []);
 
   const loadRows = useCallback(async () => {
@@ -189,7 +233,8 @@ export default function ManagerCallBackDealsPage() {
 
   useEffect(() => {
     void loadAgents();
-  }, [loadAgents]);
+    void loadStats();
+  }, [loadAgents, loadStats]);
 
   useEffect(() => {
     void loadRows();
@@ -227,6 +272,7 @@ export default function ManagerCallBackDealsPage() {
 
       setPage(1);
       await loadRows();
+      await loadStats();
     } catch (error) {
       console.error("[manager-call-back-deals] sync error", error);
       toast({
@@ -289,6 +335,7 @@ export default function ManagerCallBackDealsPage() {
       setActiveRow(null);
       setSelectedAgentId("");
       await loadRows();
+      await loadStats();
     } catch (error) {
       console.error("[manager-call-back-deals] assign error", error);
       toast({
@@ -311,6 +358,7 @@ export default function ManagerCallBackDealsPage() {
       setUnassignOpen(false);
       setActiveUnassign(null);
       await loadRows();
+      await loadStats();
     } catch (error) {
       toast({
         title: "Unassign failed",
@@ -334,6 +382,37 @@ export default function ManagerCallBackDealsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="rounded-lg border bg-card p-4">
+                <div className="text-sm text-muted-foreground">Total Deals</div>
+                <div className="text-2xl font-bold">{statsLoading ? "-" : stats.total}</div>
+              </div>
+              <div className="rounded-lg border bg-card p-4">
+                <div className="text-sm text-muted-foreground">Assigned</div>
+                <div className="text-2xl font-bold text-green-600">{statsLoading ? "-" : stats.assigned}</div>
+              </div>
+              <div className="rounded-lg border bg-card p-4">
+                <div className="text-sm text-muted-foreground">Unassigned</div>
+                <div className="text-2xl font-bold text-amber-600">{statsLoading ? "-" : stats.unassigned}</div>
+              </div>
+              <div className="rounded-lg border bg-card p-4">
+                <div className="text-sm text-muted-foreground">By Agent</div>
+                <div className="text-sm space-y-1 max-h-16 overflow-y-auto">
+                  {statsLoading ? (
+                    <div className="text-xs text-muted-foreground">Loading...</div>
+                  ) : Object.keys(stats.byAgent).length === 0 ? (
+                    <div className="text-xs text-muted-foreground">No assignments</div>
+                  ) : (
+                    Object.entries(stats.byAgent).map(([agentId, count]) => (
+                      <div key={agentId} className="flex justify-between text-xs">
+                        <span className="truncate">{assigneeNameById.get(agentId) ?? agentId}</span>
+                        <span className="font-medium ml-2">{count}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
               <Input
                 placeholder="Search by name, phone, or submission ID..."
@@ -604,6 +683,7 @@ export default function ManagerCallBackDealsPage() {
         agents={agents}
         onCompleted={() => {
           void loadRows();
+          void loadStats();
         }}
       />
     </div>

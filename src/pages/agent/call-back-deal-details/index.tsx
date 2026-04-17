@@ -19,6 +19,7 @@ import { VerificationPanel } from "@/components/agent/assigned-lead-details/veri
 import { PolicyStatusAlertDialog } from "@/components/agent/assigned-lead-details/policy-status-alert-dialog";
 import { NewSaleConfirmDialog } from "@/components/agent/assigned-lead-details/new-sale-confirm-dialog";
 import { useRetentionAgent } from "@/components/agent/assigned-lead-details/use-retention-agent";
+import { CallBackQuickDispositionModal } from "@/components/agent/call-back-deal-details/call-back-quick-disposition-modal";
 import type { RetentionType } from "@/components/agent/retention-workflows";
 import {
   buildVerificationFieldMap,
@@ -91,6 +92,8 @@ export default function AgentCallBackDealDetailsPage() {
   const [policyStatusAlertOpen, setPolicyStatusAlertOpen] = React.useState(false);
   const [newSaleConfirmOpen, setNewSaleConfirmOpen] = React.useState(false);
   const [pendingNewSalePolicyKey, setPendingNewSalePolicyKey] = React.useState<string | null>(null);
+
+  const [dispositionModalOpen, setDispositionModalOpen] = React.useState(false);
 
   const [dailyFlowRows, setDailyFlowRows] = React.useState<Array<Record<string, unknown>>>([]);
   const [dailyFlowLoading, setDailyFlowLoading] = React.useState(false);
@@ -698,7 +701,8 @@ export default function AgentCallBackDealDetailsPage() {
             selectedPolicyView={null}
             onPreviousLead={goToPreviousCallBackDeal}
             onNextLead={goToNextCallBackDeal}
-            onOpenDisposition={NOOP}
+            onOpenDisposition={() => setDispositionModalOpen(true)}
+            hideGoToDialer={true}
             callBackNavigation={{
               previousId: previousCallBackDealId,
               nextId: nextCallBackDealId,
@@ -716,7 +720,7 @@ export default function AgentCallBackDealDetailsPage() {
             ) : (
               <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
                 <div className="min-w-0">
-                  <Tabs defaultValue="policies" className="w-full min-w-0">
+                  <Tabs defaultValue="daily" className="w-full min-w-0">
                     <TabsList className="grid w-full grid-cols-3">
                       <TabsTrigger value="policies">Policies</TabsTrigger>
                       <TabsTrigger value="daily">Deal Notes</TabsTrigger>
@@ -803,6 +807,7 @@ export default function AgentCallBackDealDetailsPage() {
                     verificationInputValues={verificationInputValues}
                     onToggleVerification={handleToggleVerification}
                     onUpdateValue={handleUpdateValue}
+                    disableTcpaCheck={true}
                   />
                 </div>
               </div>
@@ -810,6 +815,18 @@ export default function AgentCallBackDealDetailsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <CallBackQuickDispositionModal
+        open={dispositionModalOpen}
+        onOpenChange={setDispositionModalOpen}
+        submissionId={deal?.submission_id ?? ""}
+        clientName={deal?.name ?? null}
+        phoneNumber={deal?.phone_number ?? null}
+        agentName={retentionAgent}
+        onSuccess={() => {
+          void loadEverything();
+        }}
+      />
     </div>
   );
 }

@@ -205,9 +205,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       };
 
       // Only overwrite is_active if not already TCPA-flagged.
-      if (!existing?.tcpa_flag) {
-        payload.is_active = true;
-      }
+      payload.is_active = existing?.tcpa_flag ? false : true;
 
       payloads.push(payload);
     }

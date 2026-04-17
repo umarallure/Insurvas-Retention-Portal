@@ -42,6 +42,12 @@ export default function AgentCallBackDealsPage() {
   const [stageFilter, setStageFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
 
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [stats, setStats] = useState<{
+    total: number;
+    byStage: Record<string, number>;
+  }>({ total: 0, byStage: {} });
+
   const pageCount = useMemo(() => {
     if (!totalRows) return 1;
     return Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
@@ -132,6 +138,55 @@ export default function AgentCallBackDealsPage() {
     void loadDeals();
   }, [loadDeals]);
 
+  const loadStats = useCallback(async () => {
+    setStatsLoading(true);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.user) {
+        setStats({ total: 0, byStage: {} });
+        return;
+      }
+
+      const { data: profile } = await supabase.from("profiles").select("id").eq("user_id", session.user.id).maybeSingle();
+
+      if (!profile?.id) {
+        setStats({ total: 0, byStage: {} });
+        return;
+      }
+
+      const { count: totalCount } = await supabase
+        .from("call_back_deals")
+        .select("*", { count: "exact", head: true })
+        .eq("assigned_to_profile_id", profile.id)
+        .eq("is_active", true);
+
+      const { data: stageData } = await supabase
+        .from("call_back_deals")
+        .select("stage")
+        .eq("assigned_to_profile_id", profile.id)
+        .eq("is_active", true);
+
+      const byStage: Record<string, number> = {};
+      (stageData ?? []).forEach((row: { stage: string | null }) => {
+        const stage = row.stage ?? "Unknown";
+        byStage[stage] = (byStage[stage] || 0) + 1;
+      });
+
+      setStats({ total: totalCount ?? 0, byStage });
+    } catch (error) {
+      console.error("[agent-call-back-deals] loadStats error", error);
+      setStats({ total: 0, byStage: {} });
+    } finally {
+      setStatsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadStats();
+  }, [loadStats]);
+
   return (
     <div className="w-full px-8 py-10 min-h-screen bg-muted/20">
       <div className="w-full">
@@ -143,6 +198,23 @@ export default function AgentCallBackDealsPage() {
             <CardDescription>Call back deals assigned to you from the CRM.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <div className="rounded-lg border bg-card p-3">
+                <div className="text-sm text-muted-foreground">Total Assigned</div>
+                <div className="text-2xl font-bold">{statsLoading ? "-" : stats.total}</div>
+              </div>
+              {STAGE_OPTIONS.map((stage) => (
+                <div key={stage} className="rounded-lg border bg-card p-3">
+                  <div className="text-sm text-muted-foreground truncate" title={stage}>
+                    {stage.split(" ").slice(0, 2).join(" ")}
+                  </div>
+                  <div className="text-2xl font-bold">
+                    {statsLoading ? "-" : stats.byStage[stage] ?? 0}
+                  </div>
+                </div>
+              ))}
+            </div>
+
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <Input
                 placeholder="Search by name, phone, or submission ID..."
@@ -172,7 +244,14 @@ export default function AgentCallBackDealsPage() {
                   ))}
                 </SelectContent>
               </Select>
-              <Button type="button" onClick={() => void loadDeals()} disabled={loading}>
+              <Button
+                type="button"
+                onClick={() => {
+                  void loadDeals();
+                  void loadStats();
+                }}
+                disabled={loading}
+              >
                 {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Refresh
               </Button>

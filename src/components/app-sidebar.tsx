@@ -32,7 +32,7 @@ import {
 } from "lucide-react";
 import { UserMenu } from "@/components/user-menu";
 import { useDashboard } from "@/components/dashboard-context";
-import { useAccess } from "@/components/access-context";
+import { useAccess, MANAGER_PAGES } from "@/components/access-context";
 
 export function AppSidebar() {
   const router = useRouter();
@@ -185,7 +185,7 @@ export function AppSidebar() {
           {canSeeManager ? (
             <SidebarMenuItem>
               <SidebarMenuButton asChild isActive={isActive("/manager")} tooltip="Manager">
-                <Link href="/manager/retention-daily-deal-flow">
+                <Link href={access.allowedPages.length > 0 ? access.allowedPages[0] : "/manager/retention-daily-deal-flow"}>
                   <ShieldIcon />
                   <span>Manager</span>
                 </Link>
@@ -205,51 +205,15 @@ export function AppSidebar() {
 
               {managerOpen ? (
                 <SidebarMenuSub>
-                  <SidebarMenuSubItem>
-                    <SidebarMenuSubButton
-                      asChild
-                      isActive={isActive("/manager/retention-daily-deal-flow")}
-                    >
-                      <Link href="/manager/retention-daily-deal-flow">
-                        <span>Retention Deal Flow</span>
-                      </Link>
-                    </SidebarMenuSubButton>
-                  </SidebarMenuSubItem>
-                  <SidebarMenuSubItem>
-                    <SidebarMenuSubButton asChild isActive={isActive("/manager/assign-lead")}>
-                      <Link href="/manager/assign-lead">
-                        <span>Assign Leads</span>
-                      </Link>
-                    </SidebarMenuSubButton>
-                  </SidebarMenuSubItem>
-                  <SidebarMenuSubItem>
-                    <SidebarMenuSubButton asChild isActive={isActive("/manager/call-back-deals")}>
-                      <Link href="/manager/call-back-deals">
-                        <span>Call Back Deals</span>
-                      </Link>
-                    </SidebarMenuSubButton>
-                  </SidebarMenuSubItem>
-                  <SidebarMenuSubItem>
-                    <SidebarMenuSubButton asChild isActive={isActive("/manager/agent-report-card")}>
-                      <Link href="/manager/agent-report-card">
-                        <span>Agent Report Card</span>
-                      </Link>
-                    </SidebarMenuSubButton>
-                  </SidebarMenuSubItem>
-                  <SidebarMenuSubItem>
-                    <SidebarMenuSubButton asChild isActive={isActive("/manager/usermanagnent")}>
-                      <Link href="/manager/usermanagnent">
-                        <span>User Management</span>
-                      </Link>
-                    </SidebarMenuSubButton>
-                  </SidebarMenuSubItem>
-                  <SidebarMenuSubItem>
-                    <SidebarMenuSubButton asChild isActive={isActive("/manager/lead-email-ghl-notes")}>
-                      <Link href="/manager/lead-email-ghl-notes">
-                        <span>Lead Email / Notes</span>
-                      </Link>
-                    </SidebarMenuSubButton>
-                  </SidebarMenuSubItem>
+                  {MANAGER_PAGES.filter(page => access.allowedPages.length === 0 || access.allowedPages.includes(page.path)).map((page) => (
+                    <SidebarMenuSubItem key={page.path}>
+                      <SidebarMenuSubButton asChild isActive={isActive(page.path)}>
+                        <Link href={page.path}>
+                          <span>{page.label}</span>
+                        </Link>
+                      </SidebarMenuSubButton>
+                    </SidebarMenuSubItem>
+                  ))}
                 </SidebarMenuSub>
               ) : null}
             </SidebarMenuItem>
