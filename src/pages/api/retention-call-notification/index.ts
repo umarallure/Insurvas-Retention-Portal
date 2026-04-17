@@ -15,6 +15,8 @@ type RequestBody = {
   retentionNotes?: string | null;
   quoteDetails?: Record<string, unknown> | null;
   updateCallResultUrl?: string | null;
+  /** When set, uses call-back deal CRM submission + synthetic policy number for handoff (same edge function path). */
+  callBackDealId?: string | null;
 };
 
 type ResponseData =
@@ -52,6 +54,26 @@ function getFunctionsUrl() {
   return `${supabaseUrl.replace(/\/+$/, "")}/functions/v1/retention-call-notification`;
 }
 
+type CallBackDealHandoffRow = {
+  id: string;
+  submission_id: string | null;
+  name: string | null;
+  phone_number: string | null;
+  call_center: string | null;
+};
+
+const DAILY_DEAL_FLOW_LEAD_VENDOR = "Retention BPO";
+
+/** Calendar YYYY-MM-DD for "today" in US Eastern (America/New_York — EST or EDT). */
+function getCalendarDateYmdAmericaNewYork(d: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseData>) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -75,14 +97,38 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(401).json({ ok: false, error: "Unauthorized" });
     }
 
+    const callBackDealId = typeof body.callBackDealId === "string" ? body.callBackDealId.trim() : "";
+
+    let callBackDealRow: CallBackDealHandoffRow | null = null;
+
+    if (callBackDealId) {
+      const { data: cbd, error: cbdErr } = await supabaseAdmin
+        .from("call_back_deals")
+        .select("id, submission_id, name, phone_number, call_center")
+        .eq("id", callBackDealId)
+        .maybeSingle();
+
+      if (cbdErr) {
+        return res.status(500).json({ ok: false, error: cbdErr.message });
+      }
+      if (!cbd) {
+        return res.status(404).json({ ok: false, error: "call_back_deals row not found" });
+      }
+      callBackDealRow = cbd as unknown as CallBackDealHandoffRow;
+    }
+
     const leadId = typeof body.leadId === "string" ? body.leadId.trim() : "";
     const dealId = typeof body.dealId === "number" && Number.isFinite(body.dealId) ? body.dealId : null;
-    const policyNumber = typeof body.policyNumber === "string" ? body.policyNumber.trim() : "";
+    let policyNumber = typeof body.policyNumber === "string" ? body.policyNumber.trim() : "";
+    if (!policyNumber && callBackDealRow) {
+      policyNumber = `CALLBACK-${callBackDealId}`;
+    }
     if (!policyNumber) {
       return res.status(400).json({ ok: false, error: "policyNumber is required" });
     }
 
-    let submissionId = "";
+    /** Submission id for retention_deal_flow, URLs, and edge payload (from lead or Monday deal). */
+    let handoffSubmissionId = "";
     let customerName = typeof body.customerName === "string" ? body.customerName.trim() : "";
     let callCenter = typeof body.callCenter === "string" ? body.callCenter.trim() : "";
     let phoneNumber = "";
@@ -98,13 +144,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         return res.status(500).json({ ok: false, error: leadErr.message });
       }
 
-      submissionId = typeof leadRow?.submission_id === "string" ? leadRow.submission_id.trim() : "";
+      const leadSid = typeof leadRow?.submission_id === "string" ? leadRow.submission_id.trim() : "";
+      handoffSubmissionId = leadSid;
       customerName ||= typeof leadRow?.customer_full_name === "string" ? leadRow.customer_full_name.trim() : "";
       phoneNumber = typeof leadRow?.phone_number === "string" ? leadRow.phone_number.trim() : "";
       callCenter ||= typeof leadRow?.lead_vendor === "string" ? leadRow.lead_vendor.trim() : "";
     }
 
-    if ((!submissionId || !customerName || !callCenter) && dealId != null) {
+    if ((!handoffSubmissionId || !customerName || !callCenter) && dealId != null) {
       const { data: dealRow, error: dealErr } = await supabaseAdmin
         .from("monday_com_deals")
         .select("id, monday_item_id, ghl_name, deal_name, phone_number, call_center")
@@ -115,7 +162,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         return res.status(500).json({ ok: false, error: dealErr.message });
       }
 
-      submissionId ||= typeof dealRow?.monday_item_id === "string" ? dealRow.monday_item_id.trim() : "";
+      const mondaySid =
+        typeof dealRow?.monday_item_id === "string" ? dealRow.monday_item_id.trim() : "";
+      handoffSubmissionId ||= mondaySid;
       customerName ||=
         (typeof dealRow?.ghl_name === "string" ? dealRow.ghl_name.trim() : "") ||
         (typeof dealRow?.deal_name === "string" ? dealRow.deal_name.trim() : "");
@@ -123,7 +172,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       callCenter ||= typeof dealRow?.call_center === "string" ? dealRow.call_center.trim() : "";
     }
 
-    if (!submissionId) {
+    if (callBackDealRow) {
+      const nm = typeof callBackDealRow.name === "string" ? callBackDealRow.name.trim() : "";
+      customerName ||= nm;
+      phoneNumber ||= typeof callBackDealRow.phone_number === "string" ? callBackDealRow.phone_number.trim() : "";
+      callCenter ||= typeof callBackDealRow.call_center === "string" ? callBackDealRow.call_center.trim() : "";
+    }
+
+    if (!handoffSubmissionId) {
       return res.status(400).json({ ok: false, error: "Unable to determine submissionId for this handoff." });
     }
 
@@ -143,28 +199,52 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       (typeof body.retentionAgent === "string" ? body.retentionAgent.trim() : "") ||
       "Unknown Agent";
 
-    let verificationSessionId =
+    const verificationSessionId =
       typeof body.verificationSessionId === "string" ? body.verificationSessionId.trim() : "";
 
-    if (!verificationSessionId) {
-      const { data: verificationRow, error: verificationErr } = await supabaseAdmin
-        .from("verification_sessions")
-        .select("id")
-        .eq("submission_id", submissionId)
-        .order("updated_at", { ascending: false, nullsFirst: false })
-        .order("created_at", { ascending: false, nullsFirst: false })
-        .limit(1)
-        .maybeSingle();
+    const dailyFlowDate = getCalendarDateYmdAmericaNewYork();
 
-      if (verificationErr) {
-        return res.status(500).json({ ok: false, error: verificationErr.message });
+    const dailyDealFlowMinimal = {
+      submission_id: handoffSubmissionId,
+      date: dailyFlowDate,
+      client_phone_number: phoneNumber.trim().length > 0 ? phoneNumber.trim() : null,
+      lead_vendor: DAILY_DEAL_FLOW_LEAD_VENDOR,
+      insured_name: customerName.trim().length > 0 ? customerName.trim() : null,
+      retention_agent: bufferAgentName.trim().length > 0 ? bufferAgentName.trim() : null,
+      retention_agent_id: userData.user.id,
+    };
+
+    const { error: dailyInsertErr } = await supabaseAdmin.from("daily_deal_flow").insert(dailyDealFlowMinimal);
+
+    if (dailyInsertErr) {
+      const isDuplicate =
+        typeof dailyInsertErr === "object" &&
+        dailyInsertErr !== null &&
+        "code" in dailyInsertErr &&
+        (dailyInsertErr as { code?: string }).code === "23505";
+
+      if (isDuplicate) {
+        const { error: dailyUpdateErr } = await supabaseAdmin
+          .from("daily_deal_flow")
+          .update({
+            client_phone_number: dailyDealFlowMinimal.client_phone_number,
+            lead_vendor: dailyDealFlowMinimal.lead_vendor,
+            insured_name: dailyDealFlowMinimal.insured_name,
+            retention_agent: dailyDealFlowMinimal.retention_agent,
+            retention_agent_id: dailyDealFlowMinimal.retention_agent_id,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("submission_id", handoffSubmissionId)
+          .eq("date", dailyFlowDate);
+
+        if (dailyUpdateErr) {
+          console.error("[retention-call-notification] daily_deal_flow update error", dailyUpdateErr);
+          return res.status(500).json({ ok: false, error: dailyUpdateErr.message });
+        }
+      } else {
+        console.error("[retention-call-notification] daily_deal_flow insert error", dailyInsertErr);
+        return res.status(500).json({ ok: false, error: dailyInsertErr.message });
       }
-
-      verificationSessionId = typeof verificationRow?.id === "string" ? verificationRow.id : "";
-    }
-
-    if (!verificationSessionId) {
-      return res.status(400).json({ ok: false, error: "Unable to determine verificationSessionId for this handoff." });
     }
 
     const quoteDetails = body.quoteDetails && typeof body.quoteDetails === "object" ? body.quoteDetails : {};
@@ -177,7 +257,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const { data: existingFlowRows, error: existingFlowErr } = await supabaseAdmin
       .from("retention_deal_flow")
       .select("id")
-      .eq("submission_id", submissionId)
+      .eq("submission_id", handoffSubmissionId)
       .eq("policy_number", policyNumber)
       .order("updated_at", { ascending: false, nullsFirst: false })
       .limit(1);
@@ -187,7 +267,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const handoffPatch = {
-      submission_id: submissionId,
+      submission_id: handoffSubmissionId,
       policy_number: policyNumber,
       lead_vendor: callCenter || null,
       insured_name: customerName || null,
@@ -225,18 +305,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const portalBaseUrl = getPortalBaseUrl(req);
-    const laReadyUrl = `${portalBaseUrl}/call-result-update?submissionId=${encodeURIComponent(
-      submissionId,
-    )}&sessionId=${encodeURIComponent(verificationSessionId)}&policyNumber=${encodeURIComponent(
-      policyNumber,
-    )}&dealId=${encodeURIComponent(String(dealId ?? ""))}&leadId=${encodeURIComponent(
-      leadId,
-    )}`;
+    let laReadyUrl = `${portalBaseUrl}/call-result-update?submissionId=${encodeURIComponent(handoffSubmissionId)}`;
+    if (verificationSessionId) {
+      laReadyUrl += `&sessionId=${encodeURIComponent(verificationSessionId)}`;
+    }
+    laReadyUrl += `&policyNumber=${encodeURIComponent(policyNumber)}&dealId=${encodeURIComponent(
+      String(dealId ?? ""),
+    )}&leadId=${encodeURIComponent(leadId)}`;
     const updateCallResultUrl =
       typeof body.updateCallResultUrl === "string" && body.updateCallResultUrl.trim().length
         ? body.updateCallResultUrl
-        : `${portalBaseUrl}/call-result-update?submissionId=${encodeURIComponent(submissionId)}`;
+        : `${portalBaseUrl}/call-result-update?submissionId=${encodeURIComponent(handoffSubmissionId)}`;
 
+    // `retention_deal_flow` / session updates above still run; edge notify is commented off below.
+
+    /* Supabase edge function `retention-call-notification` — re-enable when ready.
     const functionResponse = await fetch(getFunctionsUrl(), {
       method: "POST",
       headers: {
@@ -245,7 +328,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       },
       body: JSON.stringify({
         type: "buffer_connected",
-        submissionId,
+        submissionId: handoffSubmissionId,
         verificationSessionId,
         bufferAgentId,
         bufferAgentName,
@@ -278,6 +361,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       ok: true,
       notificationId: functionJson.notificationId ?? null,
       messageTs: functionJson.messageTs ?? null,
+    });
+    */
+
+    return res.status(200).json({
+      ok: true,
+      notificationId: null,
+      messageTs: null,
     });
   } catch (error) {
     return res.status(500).json({

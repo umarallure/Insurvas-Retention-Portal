@@ -21,6 +21,15 @@ const newSaleCarrierOptions = [
   "Transamerica",
 ];
 
+export type NewSaleQuoteDetails = {
+  carrier: string;
+  product: string;
+  coverage: string;
+  monthlyPremium: string;
+  draftDate: string;
+  notes: string;
+};
+
 type NewSaleWorkflowProps = {
   leadId: string | null;
   dealId: number | null;
@@ -30,7 +39,10 @@ type NewSaleWorkflowProps = {
   verificationSessionId: string | null;
   customerName: string | null;
   submissionId: string | null;
+  /** Present on call-back deal new sale: drives retention handoff submission + synthetic policy number server-side. */
+  callBackDealId?: string | null;
   onCancel: () => void;
+  onAfterSubmit?: (quote: NewSaleQuoteDetails) => Promise<void> | void;
 };
 
 export function NewSaleWorkflow({
@@ -42,7 +54,9 @@ export function NewSaleWorkflow({
   verificationSessionId,
   customerName,
   submissionId,
+  callBackDealId,
   onCancel,
+  onAfterSubmit,
 }: NewSaleWorkflowProps) {
   const { toast } = useToast();
 
@@ -55,11 +69,6 @@ export function NewSaleWorkflow({
   const [submitting, setSubmitting] = React.useState(false);
 
   const handleSubmit = async () => {
-
-
-    console.log("the submissionId is:", submissionId );
-    console.log("the leadId is:", leadId );
-    console.log("the dealId is:", dealId );
     setSubmitting(true);
     try {
       const {
@@ -70,6 +79,44 @@ export function NewSaleWorkflow({
       if (sessionError) throw sessionError;
       if (!session?.access_token) throw new Error("Not authenticated.");
 
+      let effectiveLeadId = leadId;
+      let effectiveSubmissionId = submissionId;
+
+      if (callBackDealId) {
+        const createResp = await fetch("/api/call-back-deals/create-new-sale-lead", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            callBackDealId,
+            quote: {
+              carrier: quoteCarrier,
+              product: quoteProduct,
+              coverage: quoteCoverage,
+              monthlyPremium: quotePremium,
+              draftDate,
+              notes: quoteNotes,
+            },
+          }),
+        });
+
+        const createPayload = (await createResp.json().catch(() => null)) as
+          | { ok: true; leadId: string; submissionId: string | null }
+          | { ok: false; error: string }
+          | null;
+
+        if (!createResp.ok || !createPayload || !("ok" in createPayload) || createPayload.ok === false) {
+          throw new Error(
+            createPayload && "error" in createPayload ? createPayload.error : `Create lead failed (${createResp.status})`,
+          );
+        }
+
+        effectiveLeadId = createPayload.leadId;
+        effectiveSubmissionId = createPayload.submissionId ?? null;
+      }
+
       const response = await fetch("/api/retention-call-notification", {
         method: "POST",
         headers: {
@@ -78,9 +125,9 @@ export function NewSaleWorkflow({
         },
         body: JSON.stringify({
           type: "buffer_connected",
-          leadId,
+          leadId: effectiveLeadId,
           dealId,
-          submissionId,
+          submissionId: effectiveSubmissionId,
           policyNumber,
           callCenter,
           retentionAgent,
@@ -88,7 +135,10 @@ export function NewSaleWorkflow({
           customerName,
           retentionType: "new_sale",
           retentionNotes: quoteNotes,
-          updateCallResultUrl: `https://agents-portal-zeta.vercel.app/call-result-update?submissionId=${submissionId}`,
+          updateCallResultUrl: `https://agents-portal-zeta.vercel.app/call-result-update?submissionId=${encodeURIComponent(
+            effectiveSubmissionId ?? "",
+          )}`,
+          callBackDealId: callBackDealId ?? null,
           quoteDetails: {
             carrier: quoteCarrier,
             product: quoteProduct,
@@ -106,6 +156,27 @@ export function NewSaleWorkflow({
 
       if (!response.ok || !payload || ("ok" in payload && payload.ok === false)) {
         throw new Error(payload && "error" in payload ? payload.error : `Submit failed (${response.status})`);
+      }
+
+      if (onAfterSubmit && !callBackDealId) {
+        try {
+          await onAfterSubmit({
+            carrier: quoteCarrier,
+            product: quoteProduct,
+            coverage: quoteCoverage,
+            monthlyPremium: quotePremium,
+            draftDate,
+            notes: quoteNotes,
+          });
+        } catch (afterError) {
+          console.error("[NewSaleWorkflow] onAfterSubmit error", afterError);
+          toast({
+            title: "Saved notification, but post-submit step failed",
+            description:
+              afterError instanceof Error ? afterError.message : "An error occurred after submission.",
+            variant: "destructive",
+          });
+        }
       }
 
       toast({
