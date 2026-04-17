@@ -7,6 +7,10 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/lib/supabase";
+import {
+  CALL_BACK_DEALS_NAV_STORAGE_KEY,
+  normaliseCallBackDealId,
+} from "@/lib/call-back-deals/navigation-context";
 import { EyeIcon, Loader2 } from "lucide-react";
 
 type CallBackDealRow = {
@@ -31,6 +35,7 @@ const STAGE_OPTIONS = [
 
 export default function AgentCallBackDealsPage() {
   const [rows, setRows] = useState<CallBackDealRow[]>([]);
+  const [navigationDealIds, setNavigationDealIds] = useState<string[]>([]);
   const [totalRows, setTotalRows] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
@@ -69,7 +74,7 @@ export default function AgentCallBackDealsPage() {
       const from = (page - 1) * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
 
-      let query = supabase
+      let listQuery = supabase
         .from("call_back_deals")
         .select(
           "id, name, phone_number, submission_id, stage, call_center, assigned_at, is_active",
@@ -79,23 +84,41 @@ export default function AgentCallBackDealsPage() {
         .eq("is_active", true)
         .order("assigned_at", { ascending: false, nullsFirst: false });
 
+      let navQuery = supabase
+        .from("call_back_deals")
+        .select("id")
+        .eq("assigned_to_profile_id", profile.id as string)
+        .eq("is_active", true)
+        .order("assigned_at", { ascending: false, nullsFirst: false })
+        .limit(2000);
+
       if (stageFilter !== "all") {
-        query = query.eq("stage", stageFilter);
+        listQuery = listQuery.eq("stage", stageFilter);
+        navQuery = navQuery.eq("stage", stageFilter);
       }
 
       const trimmed = search.trim();
       if (trimmed) {
         const escaped = trimmed.replace(/,/g, "");
-        query = query.or(
-          `name.ilike.%${escaped}%,phone_number.ilike.%${escaped}%,submission_id.ilike.%${escaped}%`,
-        );
+        const orClause = `name.ilike.%${escaped}%,phone_number.ilike.%${escaped}%,submission_id.ilike.%${escaped}%`;
+        listQuery = listQuery.or(orClause);
+        navQuery = navQuery.or(orClause);
       }
 
-      const { data, error, count } = await query.range(from, to);
+      const [listResult, navResult] = await Promise.all([
+        listQuery.range(from, to),
+        navQuery,
+      ]);
+
+      const { data, error, count } = listResult;
       if (error) throw error;
+      if (navResult.error) throw navResult.error;
 
       setRows((data ?? []) as CallBackDealRow[]);
       setTotalRows(count ?? null);
+      setNavigationDealIds(
+        (navResult.data ?? []).map((r: { id: string }) => normaliseCallBackDealId(String(r.id))),
+      );
     } catch (error) {
       console.error("[agent-call-back-deals] load error", error);
       setRows([]);
@@ -202,7 +225,22 @@ export default function AgentCallBackDealsPage() {
                       <div className="truncate text-xs text-muted-foreground">{assigned}</div>
                       <div className="flex justify-end">
                         <Button size="sm" variant="outline" className="gap-1" asChild>
-                          <a href={`/agent/call-back-deal-details?id=${encodeURIComponent(row.id)}`}>
+                          <a
+                            href={`/agent/call-back-deal-details?id=${encodeURIComponent(row.id)}`}
+                            onClick={() => {
+                              try {
+                                sessionStorage.setItem(
+                                  CALL_BACK_DEALS_NAV_STORAGE_KEY,
+                                  JSON.stringify({
+                                    dealIds: navigationDealIds,
+                                    createdAt: Date.now(),
+                                  }),
+                                );
+                              } catch {
+                                // ignore
+                              }
+                            }}
+                          >
                             <EyeIcon className="size-4" />
                             View
                           </a>

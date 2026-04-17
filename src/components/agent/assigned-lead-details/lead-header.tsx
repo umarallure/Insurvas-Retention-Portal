@@ -20,6 +20,8 @@ type LeadHeaderProps = {
   onPreviousLead: () => void;
   onNextLead: () => void;
   onOpenDisposition: () => void;
+  /** Call-back deal details: prev/next use UUIDs instead of Monday deal ids. */
+  callBackNavigation?: { previousId: string | null; nextId: string | null } | null;
 };
 
 export function LeadHeader({
@@ -36,7 +38,17 @@ export function LeadHeader({
   onPreviousLead,
   onNextLead,
   onOpenDisposition,
+  callBackNavigation,
 }: LeadHeaderProps) {
+  const previousDisabled =
+    assignedDealsLoading ||
+    (callBackNavigation
+      ? !callBackNavigation.previousId
+      : !dealId || !previousAssignedDealId);
+  const nextDisabled =
+    assignedDealsLoading ||
+    (callBackNavigation ? !callBackNavigation.nextId : !dealId || !nextAssignedDealId);
+
   // Check if this page was opened from CloudTalk (new tab from dialer)
   const canCloseTab = typeof window !== "undefined" && window.opener !== null;
 
@@ -85,7 +97,7 @@ export function LeadHeader({
             type="button"
             variant="outline"
             size="sm"
-            disabled={assignedDealsLoading || !dealId || !previousAssignedDealId}
+            disabled={previousDisabled}
             onClick={onPreviousLead}
           >
             Previous Lead
@@ -94,7 +106,7 @@ export function LeadHeader({
             type="button"
             variant="outline"
             size="sm"
-            disabled={assignedDealsLoading || !dealId || !nextAssignedDealId}
+            disabled={nextDisabled}
             onClick={onNextLead}
           >
             Next Lead

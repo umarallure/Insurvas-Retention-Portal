@@ -86,6 +86,38 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(404).json({ ok: false, error: "call_back_deals row not found" });
     }
 
+    const { data: viewerProfile, error: viewerProfileErr } = await supabaseAdmin
+      .from("profiles")
+      .select("id")
+      .eq("user_id", userData.user.id)
+      .maybeSingle();
+
+    if (viewerProfileErr || !viewerProfile?.id) {
+      return res.status(403).json({ ok: false, error: "Profile not found" });
+    }
+
+    const viewerProfileId = String(viewerProfile.id).trim().toLowerCase();
+
+    const { data: managerRow } = await supabaseAdmin
+      .from("retention_managers")
+      .select("id")
+      .eq("profile_id", viewerProfile.id)
+      .eq("active", true)
+      .maybeSingle();
+
+    const isManager = Boolean(managerRow);
+
+    if (!isManager) {
+      const assigneeRaw =
+        typeof cbd.assigned_to_profile_id === "string" ? cbd.assigned_to_profile_id.trim().toLowerCase() : "";
+      if (!assigneeRaw || assigneeRaw !== viewerProfileId) {
+        return res.status(403).json({ ok: false, error: "You do not have access to this call back deal" });
+      }
+      if (cbd.is_active === false) {
+        return res.status(403).json({ ok: false, error: "This call back deal is no longer active" });
+      }
+    }
+
     const submissionId = typeof cbd.submission_id === "string" ? cbd.submission_id.trim() : "";
     const fullName = typeof cbd.name === "string" ? cbd.name.trim() : "";
 

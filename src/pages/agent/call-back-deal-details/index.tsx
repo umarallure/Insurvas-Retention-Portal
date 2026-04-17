@@ -29,6 +29,13 @@ import {
   normalizePhoneDigits,
   buildDigitWildcardPattern,
 } from "@/lib/agent/assigned-lead-details.logic";
+import {
+  CALL_BACK_DEALS_NAV_MAX_AGE_MS,
+  CALL_BACK_DEALS_NAV_STORAGE_KEY,
+  normaliseCallBackDealId,
+  parseCallBackDealsNavContext,
+  type CallBackDealsNavContext,
+} from "@/lib/call-back-deals/navigation-context";
 
 type CallBackDealRow = {
   id: string;
@@ -62,9 +69,14 @@ export default function AgentCallBackDealDetailsPage() {
 
   const { retentionAgent } = useRetentionAgent();
 
-  const idParam = typeof router.query.id === "string" ? router.query.id : "";
+  const rawQueryId = router.query.id;
+  const idParam = React.useMemo(() => {
+    if (!router.isReady) return "";
+    const v = Array.isArray(rawQueryId) ? rawQueryId[0] : rawQueryId;
+    return typeof v === "string" ? normaliseCallBackDealId(v) : "";
+  }, [router.isReady, rawQueryId]);
 
-  const [loading, setLoading] = React.useState(true);
+  const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [deal, setDeal] = React.useState<CallBackDealRow | null>(null);
   const [lead, setLead] = React.useState<RetentionLeadForVerification | null>(null);
@@ -115,6 +127,114 @@ export default function AgentCallBackDealDetailsPage() {
     setActiveWorkflowType(null);
   }, []);
 
+  const [navDealIds, setNavDealIds] = React.useState<string[]>([]);
+  const [navLoading, setNavLoading] = React.useState(false);
+  const [navSeed, setNavSeed] = React.useState<CallBackDealsNavContext | null>(null);
+  const [navSeedReady, setNavSeedReady] = React.useState(false);
+
+  React.useLayoutEffect(() => {
+    try {
+      setNavSeed(parseCallBackDealsNavContext(sessionStorage.getItem(CALL_BACK_DEALS_NAV_STORAGE_KEY)));
+    } finally {
+      setNavSeedReady(true);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const loadNavIds = async () => {
+      setNavLoading(true);
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (!session?.user) {
+          if (!cancelled) setNavDealIds([]);
+          return;
+        }
+        const { data: profile, error: profileErr } = await supabase
+          .from("profiles")
+          .select("id")
+          .eq("user_id", session.user.id)
+          .maybeSingle();
+        if (profileErr || !profile?.id) {
+          if (!cancelled) setNavDealIds([]);
+          return;
+        }
+        const { data: rows, error } = await supabase
+          .from("call_back_deals")
+          .select("id")
+          .eq("assigned_to_profile_id", profile.id as string)
+          .eq("is_active", true)
+          .order("assigned_at", { ascending: false, nullsFirst: false })
+          .limit(2000);
+        if (error) throw error;
+        if (!cancelled) {
+          setNavDealIds(
+            (rows ?? []).map((r) => normaliseCallBackDealId(String((r as { id: string }).id))),
+          );
+        }
+      } catch (e) {
+        console.error("[call-back-deal-details] nav ids error", e);
+        if (!cancelled) setNavDealIds([]);
+      } finally {
+        if (!cancelled) setNavLoading(false);
+      }
+    };
+    void loadNavIds();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const effectiveNavIds = React.useMemo(() => {
+    const server = navDealIds;
+    const seed = navSeed?.dealIds ?? [];
+    const fresh =
+      navSeed &&
+      idParam &&
+      seed.includes(idParam) &&
+      Date.now() - navSeed.createdAt < CALL_BACK_DEALS_NAV_MAX_AGE_MS;
+    if (fresh) return seed;
+    return server.length > 0 ? server : seed;
+  }, [navDealIds, navSeed, idParam]);
+
+  const { previousCallBackDealId, nextCallBackDealId } = React.useMemo(() => {
+    const idx = idParam ? effectiveNavIds.indexOf(idParam) : -1;
+    if (idx < 0) {
+      return { previousCallBackDealId: null as string | null, nextCallBackDealId: null as string | null };
+    }
+    return {
+      previousCallBackDealId: idx > 0 ? effectiveNavIds[idx - 1]! : null,
+      nextCallBackDealId: idx < effectiveNavIds.length - 1 ? effectiveNavIds[idx + 1]! : null,
+    };
+  }, [effectiveNavIds, idParam]);
+
+  const assignedDealsLoadingForHeader =
+    !navSeedReady || (navLoading && effectiveNavIds.length === 0);
+
+  const goToPreviousCallBackDeal = React.useCallback(() => {
+    if (!previousCallBackDealId) return;
+    void router.push(`/agent/call-back-deal-details?id=${encodeURIComponent(previousCallBackDealId)}`);
+  }, [previousCallBackDealId, router]);
+
+  const goToNextCallBackDeal = React.useCallback(() => {
+    if (!nextCallBackDealId) return;
+    void router.push(`/agent/call-back-deal-details?id=${encodeURIComponent(nextCallBackDealId)}`);
+  }, [nextCallBackDealId, router]);
+
+  React.useEffect(() => {
+    if (effectiveNavIds.length === 0 || !idParam) return;
+    try {
+      sessionStorage.setItem(
+        CALL_BACK_DEALS_NAV_STORAGE_KEY,
+        JSON.stringify({ dealIds: effectiveNavIds, createdAt: Date.now() }),
+      );
+    } catch {
+      // ignore
+    }
+  }, [effectiveNavIds, idParam]);
+
   const loadEverything = React.useCallback(async () => {
     if (!idParam) return;
     setLoading(true);
@@ -151,7 +271,11 @@ export default function AgentCallBackDealDetailsPage() {
         return;
       }
 
-      const loadedDeal = json.callBackDeal;
+      const loadedDealRaw = json.callBackDeal;
+      const loadedDeal: CallBackDealRow = {
+        ...loadedDealRaw,
+        id: normaliseCallBackDealId(String(loadedDealRaw.id)),
+      };
       setDeal(loadedDeal);
       setLead(json.lead);
       setMatchedBy(json.matchedBy);
@@ -263,8 +387,9 @@ export default function AgentCallBackDealDetailsPage() {
   }, [idParam]);
 
   React.useEffect(() => {
+    if (!router.isReady || !idParam) return;
     void loadEverything();
-  }, [loadEverything]);
+  }, [router.isReady, idParam, loadEverything]);
 
   React.useEffect(() => {
     const leadRec = (lead ?? null) as unknown as Record<string, unknown> | null;
@@ -489,6 +614,14 @@ export default function AgentCallBackDealDetailsPage() {
   const productType = ((lead?.product_type as string | null | undefined) ?? "-") || "-";
   const center = deal?.call_center ?? "-";
 
+  if (!router.isReady) {
+    return (
+      <div className="w-full px-6 py-8 min-h-screen bg-muted/20 flex items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
   if (!idParam) {
     return (
       <div className="w-full px-6 py-8 min-h-screen bg-muted/20">
@@ -561,11 +694,15 @@ export default function AgentCallBackDealDetailsPage() {
             dealId={null}
             previousAssignedDealId={null}
             nextAssignedDealId={null}
-            assignedDealsLoading={false}
+            assignedDealsLoading={assignedDealsLoadingForHeader}
             selectedPolicyView={null}
-            onPreviousLead={NOOP}
-            onNextLead={NOOP}
+            onPreviousLead={goToPreviousCallBackDeal}
+            onNextLead={goToNextCallBackDeal}
             onOpenDisposition={NOOP}
+            callBackNavigation={{
+              previousId: previousCallBackDealId,
+              nextId: nextCallBackDealId,
+            }}
           />
           <CardContent className="flex flex-col gap-6">
             {loading ? (
