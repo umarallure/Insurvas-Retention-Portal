@@ -17,7 +17,6 @@ import {
   HeadsetIcon,
   HomeIcon,
   InboxIcon,
-  PhoneIcon,
   ShieldIcon,
   SearchIcon,
   SettingsIcon,
@@ -102,22 +101,16 @@ export function AppHeaderNav() {
 
           {canSeeAgent && (
             <>
-              <NavLink
-                href="/agent/dialer"
-                isActive={isActive("/agent/dialer")}
-                icon={<PhoneIcon className="h-4 w-4" />}
-                label="Dialer"
-              />
-            <NavDropdown
-              label="Agent"
-              icon={<HeadsetIcon className="h-4 w-4" />}
+              <NavDropdown
+                label="Agent"
+                icon={<HeadsetIcon className="h-4 w-4" />}
                 isActive={isActive("/agent") && !isActive("/agent/dialer")}
-              items={[
-                { href: "/agent/assigned-leads", label: "Assigned Leads" },
-                { href: "/agent/call-back-deals", label: "Call Back Deals" },
-                { href: "/agent/daily-retention-fixes", label: "Daily Retention Fixes" },
-              ]}
-            />
+                items={[
+                  { href: "/agent/assigned-leads", label: "Assigned Leads" },
+                  { href: "/agent/call-back-deals", label: "Call Back Deals" },
+                  { href: "/agent/daily-retention-fixes", label: "Daily Retention Fixes" },
+                ]}
+              />
             </>
           )}
 
