@@ -24,7 +24,6 @@ import {
   HeadsetIcon,
   HomeIcon,
   InboxIcon,
-  PhoneIcon,
   ShieldIcon,
   SearchIcon,
   SettingsIcon,
@@ -155,14 +154,6 @@ export function AppSidebar() {
 
               {agentOpen ? (
                 <SidebarMenuSub>
-                  <SidebarMenuSubItem>
-                    <SidebarMenuSubButton asChild isActive={isActive("/agent/dialer")}>
-                      <Link href="/agent/dialer">
-                        <PhoneIcon className="h-4 w-4" />
-                        <span>Dialer Dashboard</span>
-                      </Link>
-                    </SidebarMenuSubButton>
-                  </SidebarMenuSubItem>
                   <SidebarMenuSubItem>
                     <SidebarMenuSubButton asChild isActive={isActive("/agent/assigned-leads")}>
                       <Link href="/agent/assigned-leads">

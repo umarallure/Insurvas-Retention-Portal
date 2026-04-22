@@ -6,6 +6,7 @@ export type AssignCallBackDealInput = {
   assigneeProfileId: string;
   assignedByProfileId: string;
   phoneNumber: string | null;
+  skipTcpa?: boolean;
 };
 
 export type AssignCallBackDealResult =
@@ -30,9 +31,12 @@ export type AssignCallBackDealResult =
  * Runs a TCPA check first, then assigns the call-back deal to the given agent.
  * If TCPA is detected, the row is marked `is_active = false, tcpa_flag = true` and
  * the assignment is blocked. DNC alone does NOT block.
+ * If skipTcpa is true, TCPA check is skipped.
  */
 export async function assignCallBackDeal(input: AssignCallBackDealInput): Promise<AssignCallBackDealResult> {
-  const tcpa = await checkTcpaStatus(input.phoneNumber);
+  const tcpa = input.skipTcpa
+    ? { status: "clear" as const, message: "", normalizedPhone: null, errors: [] }
+    : await checkTcpaStatus(input.phoneNumber);
 
   if (tcpa.status === "tcpa") {
     const { error } = await supabase

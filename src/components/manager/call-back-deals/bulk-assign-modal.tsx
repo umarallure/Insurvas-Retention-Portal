@@ -137,6 +137,7 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
   ]);
 
   const [running, setRunning] = React.useState(false);
+  const [skipTcpa, setSkipTcpa] = React.useState(false);
   const [progress, setProgress] = React.useState<{
     done: number;
     total: number;
@@ -201,6 +202,7 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
     setMode("percent");
     setAllocations([{ agentId: "", percent: 100, count: 0 }]);
     setProgress({ done: 0, total: 0, assigned: 0, tcpa: 0, failed: 0 });
+    setSkipTcpa(false);
   }, [open]);
 
   React.useEffect(() => {
@@ -331,6 +333,7 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
             assigneeProfileId,
             assignedByProfileId: managerProfileId,
             phoneNumber: deal.phone_number,
+            skipTcpa,
           }),
         ),
       );
@@ -368,8 +371,25 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
 
         <div className="space-y-4 py-2">
           <div className="text-sm text-muted-foreground">
-            Pool: {loadingPool ? "loading…" : `${pool.length} active, unassigned call back deals`}. TCPA will be
-            checked per deal before assignment; flagged deals will be marked inactive and skipped.
+            Pool: {loadingPool ? "loading…" : `${pool.length} active, unassigned call back deals`}.
+            {skipTcpa ? (
+              <span className="text-amber-600"> TCPA check is disabled.</span>
+            ) : (
+              <> TCPA will be checked per deal before assignment; flagged deals will be marked inactive and skipped.</>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="skip-tcpa"
+              checked={skipTcpa}
+              onChange={(e) => setSkipTcpa(e.target.checked)}
+              className="w-4 h-4"
+            />
+            <label htmlFor="skip-tcpa" className="text-sm cursor-pointer">
+              Skip TCPA Check
+            </label>
           </div>
 
           <div className="flex items-center gap-2">

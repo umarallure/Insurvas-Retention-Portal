@@ -162,7 +162,7 @@ export default function RetentionDailyDealFlowPage() {
 
       if (statusFilter && statusFilter !== "all") {
         console.log("[DEBUG] Applying status filter:", statusFilter);
-        // Use client-side filtering for status due to whitespace issues in DB data
+        query = query.ilike("status", `%${statusFilter.trim()}%`);
       } else {
         console.log("[DEBUG] Status filter not applied, statusFilter:", statusFilter);
       }
@@ -339,16 +339,27 @@ export default function RetentionDailyDealFlowPage() {
     try {
       const submissionIds = Array.from(selectedSubmissionIds);
 
+      // Update retention_deal_flow entries by clearing retention_agent and setting status to "unassigned"
       const { error } = await supabase
-        .from("call_back_deals")
-        .update({ assigned: false, is_active: false })
+        .from("retention_deal_flow")
+        .update({
+          retention_agent: null,
+          status: "unassigned",
+          updated_at: new Date().toISOString(),
+        })
         .in("submission_id", submissionIds);
 
       if (error) throw error;
 
+      // Also update call_back_deals to unassign them
+      await supabase
+        .from("call_back_deals")
+        .update({ assigned: false, is_active: false })
+        .in("submission_id", submissionIds);
+
       toastRef.current({
         title: "Unassign Successful",
-        description: `Unassigned and deactivated ${submissionIds.length} deal(s) from call back deals.`,
+        description: `Unassigned ${submissionIds.length} deal(s) from retention deal flow.`,
       });
 
       setSelectedSubmissionIds(new Set());
