@@ -64,6 +64,7 @@ type ProfileRow = {
   id: string;
   display_name: string | null;
   email: string | null;
+  assigned_agency: string | null;
 };
 
 const PAGE_SIZE = 25;
@@ -106,7 +107,7 @@ export default function ManagerAssignLeadPage() {
   const loadAgents = useCallback(async () => {
     const { data: raRows, error: raError } = await supabase
       .from("retention_agents")
-      .select("profile_id")
+      .select("profile_id, assigned_agency")
       .eq("active", true);
 
     if (raError) {
@@ -115,6 +116,10 @@ export default function ManagerAssignLeadPage() {
     }
 
     const profileIds = (raRows ?? []).map((row) => row.profile_id as string);
+    const agencyByProfileId = new Map<string, string | null>();
+    for (const row of raRows ?? []) {
+      agencyByProfileId.set(row.profile_id, row.assigned_agency);
+    }
     if (profileIds.length === 0) {
       setAgents([]);
       return;
@@ -134,6 +139,7 @@ export default function ManagerAssignLeadPage() {
       id: p.id as string,
       display_name: (p.display_name as string | null) ?? null,
       email: null,
+      assigned_agency: agencyByProfileId.get(p.id) ?? null,
     }));
 
     setAgents(mapped);
@@ -1204,6 +1210,7 @@ export default function ManagerAssignLeadPage() {
                   {agents.map((agent) => (
                     <SelectItem key={agent.id} value={agent.id}>
                       {agent.display_name || agent.email || agent.id}
+                      {agent.assigned_agency ? ` (${agent.assigned_agency})` : ""}
                     </SelectItem>
                   ))}
                 </SelectContent>

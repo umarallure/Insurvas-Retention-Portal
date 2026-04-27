@@ -16,7 +16,6 @@ function toLabel(key: string) {
   const overrides: Record<string, string> = {
     insured_name: "Insured Name",
     client_phone_number: "Client Phone",
-    policy_number: "Policy #",
     retention_agent: "Retention Agent",
     call_result: "Call Source",
     monthly_premium: "Monthly Premium",
@@ -302,7 +301,6 @@ export default function AgentDailyRetentionFixesPage() {
       "created_at",
       "insured_name",
       "client_phone_number",
-      "policy_number",
       "carrier",
       "status",
       "monthly_premium",

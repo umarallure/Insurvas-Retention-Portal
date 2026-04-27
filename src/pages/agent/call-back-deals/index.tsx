@@ -35,11 +35,14 @@ const STAGE_OPTIONS = [
 
 export default function AgentCallBackDealsPage() {
   const [rows, setRows] = useState<CallBackDealRow[]>([]);
+  const [retentionData, setRetentionData] = useState<Record<string, { status: string; notes: string }>>({});
   const [navigationDealIds, setNavigationDealIds] = useState<string[]>([]);
   const [totalRows, setTotalRows] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [stageFilter, setStageFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [statusOptions, setStatusOptions] = useState<string[]>([]);
   const [page, setPage] = useState(1);
 
   const [statsLoading, setStatsLoading] = useState(false);
@@ -80,6 +83,21 @@ export default function AgentCallBackDealsPage() {
       const from = (page - 1) * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
 
+      let statusFilteredSubmissionIds: string[] | null = null;
+      if (statusFilter !== "all") {
+        const { data: statusMatches } = await supabase
+          .from("retention_deal_flow")
+          .select("submission_id")
+          .eq("status", statusFilter);
+        const filtered = (statusMatches ?? []).map((m) => m.submission_id).filter(Boolean);
+        if (filtered.length === 0) {
+          setRows([]);
+          setTotalRows(0);
+          return;
+        }
+        statusFilteredSubmissionIds = filtered;
+      }
+
       let listQuery = supabase
         .from("call_back_deals")
         .select(
@@ -103,6 +121,11 @@ export default function AgentCallBackDealsPage() {
         navQuery = navQuery.eq("stage", stageFilter);
       }
 
+      if (statusFilteredSubmissionIds !== null) {
+        listQuery = listQuery.in("submission_id", statusFilteredSubmissionIds);
+        navQuery = navQuery.in("submission_id", statusFilteredSubmissionIds);
+      }
+
       const trimmed = search.trim();
       if (trimmed) {
         const escaped = trimmed.replace(/,/g, "");
@@ -120,11 +143,38 @@ export default function AgentCallBackDealsPage() {
       if (error) throw error;
       if (navResult.error) throw navResult.error;
 
-      setRows((data ?? []) as CallBackDealRow[]);
+      let deals = data ?? [];
       setTotalRows(count ?? null);
       setNavigationDealIds(
         (navResult.data ?? []).map((r: { id: string }) => normaliseCallBackDealId(String(r.id))),
       );
+
+      const submissionIds = deals.map((d) => d.submission_id).filter(Boolean);
+
+      if (submissionIds.length > 0) {
+        const { data: retentionRows } = await supabase
+          .from("retention_deal_flow")
+          .select("submission_id, status, notes")
+          .in("submission_id", submissionIds);
+
+        const retentionMap: Record<string, { status: string; notes: string }> = {};
+        const uniqueStatuses = new Set<string>();
+
+        if (retentionRows) {
+          for (const r of retentionRows) {
+            retentionMap[r.submission_id] = {
+              status: r.status ?? "",
+              notes: r.notes ?? "",
+            };
+            if (r.status) uniqueStatuses.add(r.status);
+          }
+        }
+
+        setRetentionData(retentionMap);
+        setStatusOptions(Array.from(uniqueStatuses).sort());
+      }
+
+      setRows(deals as CallBackDealRow[]);
     } catch (error) {
       console.error("[agent-call-back-deals] load error", error);
       setRows([]);
@@ -132,11 +182,19 @@ export default function AgentCallBackDealsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, stageFilter, search]);
+  }, [page, stageFilter, search, statusFilter]);
 
   useEffect(() => {
     void loadDeals();
   }, [loadDeals]);
+
+  useEffect(() => {
+    if (statusFilter === "all" && Object.keys(retentionData).length === 0) return;
+    if (statusFilter !== "all") {
+      setPage(1);
+    }
+    void loadDeals();
+  }, [statusFilter]);
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
@@ -193,7 +251,7 @@ export default function AgentCallBackDealsPage() {
         <Card className="shadow-sm">
           <CardHeader>
             <div className="flex items-center gap-2">
-              <h2 className="text-lg font-semibold">Call Back Deals</h2>
+              <h2 className="text-lg font-semibold">New Sale Deals</h2>
             </div>
             <CardDescription>Call back deals assigned to you from the CRM.</CardDescription>
           </CardHeader>
@@ -244,6 +302,25 @@ export default function AgentCallBackDealsPage() {
                   ))}
                 </SelectContent>
               </Select>
+              <Select
+                value={statusFilter}
+                onValueChange={(v) => {
+                  setStatusFilter(v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-[220px]">
+                  <SelectValue placeholder="All Statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  {statusOptions.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Button
                 type="button"
                 onClick={() => {
@@ -260,11 +337,13 @@ export default function AgentCallBackDealsPage() {
             <div className="rounded-md border">
               <div
                 className="grid gap-3 p-3 text-sm font-medium text-muted-foreground"
-                style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr 0.9fr" }}
+                style={{ gridTemplateColumns: "1.5fr 1fr 0.8fr 1fr 1fr 1fr 0.8fr" }}
               >
                 <div>Name</div>
                 <div>Phone</div>
                 <div>Stage</div>
+                <div>Status</div>
+                <div>Notes</div>
                 <div>Assigned</div>
                 <div className="text-right">Actions</div>
               </div>
@@ -293,14 +372,17 @@ export default function AgentCallBackDealsPage() {
                     <div
                       key={row.id}
                       className="grid gap-3 p-3 text-sm items-center border-t"
-                      style={{ gridTemplateColumns: "2fr 1fr 1fr 1fr 0.9fr" }}
+                      style={{ gridTemplateColumns: "1.5fr 1fr 0.8fr 1fr 1fr 1fr 0.8fr" }}
                     >
                       <div className="truncate" title={row.name ?? undefined}>
                         <span className="font-medium">{row.name ?? "Unknown"}</span>
-                        <span className="ml-2 text-xs text-muted-foreground">#{row.submission_id}</span>
                       </div>
                       <div className="truncate font-mono text-xs">{row.phone_number ?? "—"}</div>
                       <div className="truncate">{row.stage ?? "—"}</div>
+                      <div className="truncate text-xs">{retentionData[row.submission_id]?.status ?? "—"}</div>
+                      <div className="truncate text-xs text-muted-foreground max-w-[120px]" title={retentionData[row.submission_id]?.notes ?? undefined}>
+                        {retentionData[row.submission_id]?.notes ? retentionData[row.submission_id].notes.slice(0, 30) + (retentionData[row.submission_id].notes.length > 30 ? "..." : "") : "—"}
+                      </div>
                       <div className="truncate text-xs text-muted-foreground">{assigned}</div>
                       <div className="flex justify-end">
                         <Button size="sm" variant="outline" className="gap-1" asChild>

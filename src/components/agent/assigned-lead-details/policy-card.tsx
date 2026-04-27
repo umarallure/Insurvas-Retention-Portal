@@ -39,6 +39,7 @@ type PolicyCardProps = {
   lead: Record<string, unknown> | null;
   selectedDeal: { monday_item_id?: string | null; ghl_stage?: string | null } | null;
   retentionAgent: string;
+  retentionAgentId: string;
   verificationSessionId: string | null;
   verificationItems: Array<Record<string, unknown>>;
   verificationInputValues: Record<string, string>;
@@ -62,6 +63,7 @@ export function PolicyCard({
   lead,
   selectedDeal,
   retentionAgent,
+  retentionAgentId,
   verificationSessionId,
   verificationItems,
   verificationInputValues,
@@ -333,6 +335,7 @@ export function PolicyCard({
                   policyNumber={policy.policyNumber ?? null}
                   callCenter={policy.callCenter ?? null}
                   retentionAgent={retentionAgent}
+                  retentionAgentId={retentionAgentId}
                   verificationSessionId={verificationSessionId}
                   customerName={policy.clientName}
                   submissionId={typeof lead?.submission_id === "string" ? lead.submission_id : null}

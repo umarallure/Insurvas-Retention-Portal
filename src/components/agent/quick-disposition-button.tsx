@@ -20,7 +20,7 @@ export function QuickDispositionButton({
       size="sm"
       onClick={onClick}
       disabled={disabled}
-      className="gap-2"
+      className="gap-2 bg-green-600 hover:bg-green-700"
     >
       <ListChecks className="h-4 w-4" />
       Quick Disposition

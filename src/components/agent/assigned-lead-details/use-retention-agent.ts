@@ -22,7 +22,7 @@ export function useRetentionAgent() {
 
         const { data: profile, error: profileError } = await supabase
           .from("profiles")
-          .select("display_name")
+          .select("id, display_name")
           .eq("user_id", session.user.id)
           .maybeSingle();
 
@@ -31,7 +31,7 @@ export function useRetentionAgent() {
         const name = (profile?.display_name as string | null) ?? null;
         if (!cancelled && name && name.trim().length) {
           setRetentionAgent(name);
-          setRetentionAgentId(session.user.id);
+          setRetentionAgentId(profile?.id ?? session.user.id);
         }
       } catch {
         if (!cancelled) setRetentionAgent("");

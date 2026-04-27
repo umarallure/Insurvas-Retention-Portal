@@ -12,26 +12,24 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { Loader2, Plus, X } from "lucide-react";
 
-import {
-  BulkAssignAllocationRow,
-  type BulkAssignAgentOption,
-} from "@/components/manager/assign-lead/bulk-assign-allocation-row";
-import {
-  computeAllocationCounts,
-  computeEvenAllocationCounts,
-  isValidPercentTotal,
-  normalizeAllocations,
-} from "@/components/manager/assign-lead/bulk-assign-utils";
-import { assignCallBackDeal } from "@/lib/call-back-deals/assign";
+import { assignFailedPaymentFix } from "@/lib/failed-payment-fixes/assign";
 
-type CallBackDealRow = {
+type FailedPaymentFixRow = {
   id: string;
   name: string | null;
   phone_number: string | null;
-  submission_id: string;
+  policy_number: string;
+  assigned_agency: string | null;
+  ghl_stage: string | null;
 };
 
-type CallBackBulkAssignModalProps = {
+type BulkAssignAgentOption = {
+  id: string;
+  display_name: string | null;
+  assigned_agency: string | null;
+};
+
+type BulkAssignModalProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   agents: BulkAssignAgentOption[];
@@ -47,10 +45,22 @@ type AllocationRowState = {
 };
 
 const STAGE_OPTIONS = [
-  "Incomplete Transfer",
-  "Application Withdrawn",
-  "Needs BPO Callback",
-  "Declined Underwriting",
+  "Chargeback Cancellation",
+  "Chargeback Failed Payment",
+  "FDPF Incorrect Banking Info",
+  "FDPF Insufficient Funds",
+  "FDPF Pending Reason",
+  "Pending Lapse Incorrect Banking Info",
+  "Pending Lapse Insufficient Funds",
+  "Pending Lapse Pending Reason",
+  "Pending Lapse Unauthorized Draft",
+  "Pending Manual Action",
+];
+
+const AGENCY_OPTIONS = [
+  "Heritage Insurance",
+  "Safe Harbor Insurance",
+  "Unlimited Insurance",
 ];
 
 function CountAllocationRow(props: {
@@ -76,7 +86,7 @@ function CountAllocationRow(props: {
           <SelectContent position="popper">
             {agents.map((a) => (
               <SelectItem key={a.id} value={a.id}>
-                {a.display_name ?? a.id}
+                {a.display_name ?? a.id} {a.assigned_agency ? `(${a.assigned_agency})` : ""}
               </SelectItem>
             ))}
           </SelectContent>
@@ -118,7 +128,74 @@ function CountAllocationRow(props: {
   );
 }
 
-export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
+function PercentAllocationRow(props: {
+  value: { agentId: string; percent: number };
+  agents: BulkAssignAgentOption[];
+  disabled?: boolean;
+  onChange: (next: { agentId: string; percent: number }) => void;
+  onRemove: () => void;
+  canRemove: boolean;
+}) {
+  const { value, agents, disabled, onChange, onRemove, canRemove } = props;
+  return (
+    <div className="grid grid-cols-12 gap-2 items-center">
+      <div className="col-span-7">
+        <Select
+          value={value.agentId}
+          onValueChange={(v) => onChange({ ...value, agentId: v })}
+          disabled={disabled}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Select retention agent" />
+          </SelectTrigger>
+          <SelectContent position="popper">
+            {agents.map((a) => (
+              <SelectItem key={a.id} value={a.id}>
+                {a.display_name ?? a.id} {a.assigned_agency ? `(${a.assigned_agency})` : ""}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="col-span-4">
+        <div className="flex items-center gap-2">
+          <Input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={100}
+            step={1}
+            value={Number.isFinite(value.percent) ? value.percent : 0}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              onChange({
+                ...value,
+                percent: Number.isFinite(n) && n >= 0 ? Math.min(100, Math.floor(n)) : 0,
+              });
+            }}
+            placeholder="Percent"
+            disabled={disabled}
+          />
+          <span className="text-sm text-muted-foreground">%</span>
+        </div>
+      </div>
+      <div className="col-span-1 flex justify-end">
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          onClick={onRemove}
+          disabled={disabled || !canRemove}
+          aria-label="Remove"
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
   const { open, onOpenChange, agents, onCompleted } = props;
   const { toast } = useToast();
   const toastRef = React.useRef(toast);
@@ -127,8 +204,9 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
   }, [toast]);
 
   const [loadingPool, setLoadingPool] = React.useState(false);
-  const [pool, setPool] = React.useState<CallBackDealRow[]>([]);
+  const [pool, setPool] = React.useState<FailedPaymentFixRow[]>([]);
   const [stageFilter, setStageFilter] = React.useState<string[]>([]);
+  const [agencyFilter, setAgencyFilter] = React.useState<string>("all");
 
   const [mode, setMode] = React.useState<AllocationMode>("percent");
 
@@ -146,22 +224,26 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
     failed: number;
   }>({ done: 0, total: 0, assigned: 0, tcpa: 0, failed: 0 });
 
-  const loadPool = React.useCallback(async () => {
+  const loadPool = React.useCallback(async (stageFilterValue: string[], agencyFilterValue: string) => {
     setLoadingPool(true);
     try {
       let baseQuery = supabase
-        .from("call_back_deals")
-        .select("id, name, phone_number, submission_id", { count: "exact" })
+        .from("failed_payment_fixes")
+        .select("id, name, phone_number, policy_number, assigned_agency, ghl_stage", { count: "exact" })
         .eq("is_active", true)
         .eq("assigned", false)
-        .order("last_synced_at", { ascending: false, nullsFirst: false });
+        .order("created_at", { ascending: false });
 
-      if (stageFilter.length > 0) {
-        baseQuery = baseQuery.in("stage", stageFilter);
+      if (stageFilterValue.length > 0) {
+        baseQuery = baseQuery.in("ghl_stage", stageFilterValue);
+      }
+
+      if (agencyFilterValue !== "all") {
+        baseQuery = baseQuery.eq("assigned_agency", agencyFilterValue);
       }
 
       const PAGE_SIZE = 1000;
-      const allData: CallBackDealRow[] = [];
+      const allData: FailedPaymentFixRow[] = [];
       let from = 0;
       let totalCount = 0;
 
@@ -174,7 +256,7 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
           totalCount = count;
         }
 
-        allData.push(...((data ?? []) as CallBackDealRow[]));
+        allData.push(...((data ?? []) as FailedPaymentFixRow[]));
 
         if ((data ?? []).length < PAGE_SIZE) break;
         from += PAGE_SIZE;
@@ -184,7 +266,7 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
 
       setPool(allData);
     } catch (error) {
-      console.error("[cbd-bulk-assign] pool error", error);
+      console.error("[failed-payment-fix-bulk-assign] pool error", error);
       toastRef.current({
         title: "Failed to load pool",
         description: error instanceof Error ? error.message : "Unknown error",
@@ -194,21 +276,25 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
     } finally {
       setLoadingPool(false);
     }
-  }, [stageFilter]);
+  }, []);
 
   React.useEffect(() => {
     if (!open) return;
-    setStageFilter([]);
-    setMode("percent");
-    setAllocations([{ agentId: "", percent: 100, count: 0 }]);
-    setProgress({ done: 0, total: 0, assigned: 0, tcpa: 0, failed: 0 });
-    setSkipTcpa(false);
-  }, [open]);
+    void loadPool(stageFilter, agencyFilter);
+  }, [open, stageFilter, agencyFilter]);
 
-  React.useEffect(() => {
-    if (!open) return;
-    void loadPool();
-  }, [open, stageFilter, loadPool]);
+  const handleStageFilterChange = (selected: string[]) => {
+    setStageFilter(selected);
+  };
+
+  const handleAgencyFilterChange = (value: string) => {
+    setAgencyFilter(value);
+  };
+
+  const filteredAgentsByAgency = React.useMemo(() => {
+    if (agencyFilter === "all") return agents;
+    return agents.filter((a) => a.assigned_agency === agencyFilter);
+  }, [agents, agencyFilter]);
 
   const totalCount = React.useMemo(
     () => allocations.reduce((acc, a) => acc + (Number.isFinite(a.count) ? Math.max(0, Math.floor(a.count)) : 0), 0),
@@ -223,23 +309,20 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
     if (!hasAllAgents) return false;
 
     if (mode === "percent") {
-      const normalized = normalizeAllocations(
-        allocations.map((a) => ({ agentId: a.agentId, percent: a.percent })),
-      );
-      return isValidPercentTotal(normalized);
+      const total = allocations.reduce((acc, a) => acc + (Number.isFinite(a.percent) ? Math.max(0, a.percent) : 0), 0);
+      return total === 100;
     }
 
     if (mode === "count") {
       return totalCount > 0 && totalCount <= pool.length;
     }
 
-    // even
     return true;
   }, [pool.length, running, allocations, mode, totalCount]);
 
   const plan = React.useMemo(() => {
     if (pool.length === 0 || allocations.length === 0) return [];
-    const result: Array<{ deal: CallBackDealRow; assigneeProfileId: string }> = [];
+    const result: Array<{ deal: FailedPaymentFixRow; assigneeProfileId: string }> = [];
 
     if (mode === "count") {
       let cursor = 0;
@@ -257,23 +340,43 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
       return result;
     }
 
-    const normalized = normalizeAllocations(
-      allocations.map((a) => ({ agentId: a.agentId, percent: a.percent })),
-    );
-    const computed =
-      mode === "even"
-        ? computeEvenAllocationCounts(pool.length, normalized)
-        : computeAllocationCounts(pool.length, normalized);
-
-    let cursor = 0;
-    for (const a of computed) {
-      for (let i = 0; i < a.count; i += 1) {
+    if (mode === "even") {
+      const countPerAgent = Math.floor(pool.length / allocations.filter((a) => a.agentId).length);
+      let cursor = 0;
+      for (const a of allocations) {
+        if (!a.agentId) continue;
+        for (let i = 0; i < countPerAgent && cursor < pool.length; i += 1) {
+          const deal = pool[cursor];
+          if (!deal) break;
+          result.push({ deal, assigneeProfileId: a.agentId });
+          cursor += 1;
+        }
+      }
+      const remaining = pool.length - cursor;
+      for (let i = 0; i < remaining; i += 1) {
         const deal = pool[cursor];
         if (!deal) break;
-        result.push({ deal, assigneeProfileId: a.agentId });
+        result.push({ deal, assigneeProfileId: allocations[i % allocations.length]?.agentId ?? "" });
         cursor += 1;
       }
+      return result;
     }
+
+    if (mode === "percent") {
+      let cursor = 0;
+      for (const a of allocations) {
+        if (!a.agentId || !Number.isFinite(a.percent)) continue;
+        const want = Math.floor(pool.length * (a.percent / 100));
+        for (let i = 0; i < want && cursor < pool.length; i += 1) {
+          const deal = pool[cursor];
+          if (!deal) break;
+          result.push({ deal, assigneeProfileId: a.agentId });
+          cursor += 1;
+        }
+      }
+      return result;
+    }
+
     return result;
   }, [pool, allocations, mode]);
 
@@ -328,8 +431,8 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
       const batch = plan.slice(i, i + CONCURRENCY);
       const results = await Promise.allSettled(
         batch.map(({ deal, assigneeProfileId }) =>
-          assignCallBackDeal({
-            callBackDealId: deal.id,
+          assignFailedPaymentFix({
+            failedPaymentFixId: deal.id,
             assigneeProfileId,
             assignedByProfileId: managerProfileId,
             phoneNumber: deal.phone_number,
@@ -344,7 +447,7 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
           else if (r.value.action === "tcpa_blocked") tcpa += 1;
           else failed += 1;
         } else {
-          console.error("[cbd-bulk-assign] item error", r.reason);
+          console.error("[failed-payment-fix-bulk-assign] item error", r.reason);
           failed += 1;
         }
       }
@@ -364,14 +467,14 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-[95vw] max-h-[95vh] overflow-hidden flex flex-col">
         <DialogHeader>
-          <DialogTitle>Bulk Assign New Sale Deals</DialogTitle>
+          <DialogTitle>Bulk Assign Failed Payment Fixes</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4 py-2">
+        <div className="flex-1 overflow-auto space-y-4 py-2">
           <div className="text-sm text-muted-foreground">
-            Pool: {loadingPool ? "loading…" : `${pool.length} active, unassigned call back deals`}.
+            Pool: {loadingPool ? "loading…" : `${pool.length} active, unassigned failed payment fixes`}.
             {skipTcpa ? (
               <span className="text-amber-600"> TCPA check is disabled.</span>
             ) : (
@@ -382,30 +485,108 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
           <div className="flex items-center gap-2">
             <input
               type="checkbox"
-              id="skip-tcpa"
+              id="skip-tcpa-fpf"
               checked={skipTcpa}
               onChange={(e) => setSkipTcpa(e.target.checked)}
               className="w-4 h-4"
             />
-            <label htmlFor="skip-tcpa" className="text-sm cursor-pointer">
+            <label htmlFor="skip-tcpa-fpf" className="text-sm cursor-pointer">
               Skip TCPA Check
             </label>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium">Filter by Stage:</span>
-            <MultiSelect
-              options={STAGE_OPTIONS}
-              selected={stageFilter}
-              onChange={(selected) => {
-                setStageFilter(selected);
-              }}
-              placeholder="All Stages"
-              className="w-full lg:w-[300px]"
-              showAllOption={true}
-              allOptionLabel="All Stages"
-            />
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Filter by Agency:</span>
+              <Select value={agencyFilter} onValueChange={handleAgencyFilterChange}>
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue placeholder="All Agencies" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Agencies</SelectItem>
+                  {AGENCY_OPTIONS.map((agency) => (
+                    <SelectItem key={agency} value={agency}>
+                      {agency}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Filter by Stage:</span>
+              <MultiSelect
+                options={STAGE_OPTIONS}
+                selected={stageFilter}
+                onChange={handleStageFilterChange}
+                placeholder="All Stages"
+                className="w-full lg:w-[300px]"
+                showAllOption={true}
+                allOptionLabel="All Stages"
+              />
+            </div>
           </div>
+
+          <Separator />
+
+          <div className="flex items-center gap-4 text-sm">
+            <div className="flex-1">
+              <span className="font-medium">Pool Preview:</span>
+              <span className="text-muted-foreground ml-2">
+                {loadingPool ? (
+                  <span className="inline-flex items-center">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading...
+                  </span>
+                ) : (
+                  <>Showing first 10 of <span className="font-medium">{pool.length}</span> deals</>
+                )}
+              </span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void loadPool(stageFilter, agencyFilter)}
+              disabled={loadingPool || running}
+            >
+              {loadingPool ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Reload
+            </Button>
+          </div>
+
+          {!loadingPool && pool.length > 0 && (
+            <div className="flex-1 overflow-auto border rounded-md max-h-[300px]">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/30 sticky top-0">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium">#</th>
+                    <th className="text-left px-3 py-2 font-medium">Name</th>
+                    <th className="text-left px-3 py-2 font-medium">Phone</th>
+                    <th className="text-left px-3 py-2 font-medium">Policy #</th>
+                    <th className="text-left px-3 py-2 font-medium">Agency</th>
+                    <th className="text-left px-3 py-2 font-medium">Stage</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pool.slice(0, 10).map((deal, idx) => (
+                    <tr key={deal.id} className="border-t">
+                      <td className="px-3 py-2 text-muted-foreground">{idx + 1}</td>
+                      <td className="px-3 py-2">{deal.name ?? "-"}</td>
+                      <td className="px-3 py-2">{deal.phone_number ?? "-"}</td>
+                      <td className="px-3 py-2">{deal.policy_number}</td>
+                      <td className="px-3 py-2">{deal.assigned_agency ?? "-"}</td>
+                      <td className="px-3 py-2">{deal.ghl_stage ?? "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {!loadingPool && pool.length === 0 && (
+            <div className="p-4 text-sm text-muted-foreground text-center border rounded-md">
+              No unassigned deals match the selected filters.
+            </div>
+          )}
 
           <Separator />
 
@@ -414,9 +595,9 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
             <div className="inline-flex rounded-md border p-0.5 bg-muted/40">
               {(
                 [
-                  { id: "percent", label: "By Percent" },
-                  { id: "count", label: "By Count" },
-                  { id: "even", label: "Even Distribution" },
+                  { id: "percent" as AllocationMode, label: "By Percent" },
+                  { id: "count" as AllocationMode, label: "By Count" },
+                  { id: "even" as AllocationMode, label: "Even Distribution" },
                 ] as Array<{ id: AllocationMode; label: string }>
               ).map((opt) => (
                 <button
@@ -436,6 +617,14 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
             </div>
           </div>
 
+          <div className="text-xs text-amber-600">
+            {agencyFilter !== "all" && filteredAgentsByAgency.length === 0
+              ? "No agents assigned to this agency. Please assign agents to this agency first."
+              : agencyFilter !== "all"
+              ? `Only agents assigned to "${agencyFilter}" are shown below.`
+              : null}
+          </div>
+
           <div className="space-y-2">
             {allocations.map((a, idx) => {
               if (mode === "count") {
@@ -443,7 +632,7 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
                   <CountAllocationRow
                     key={idx}
                     value={a}
-                    agents={agents}
+                    agents={filteredAgentsByAgency}
                     disabled={running}
                     onChange={(next) => handleChange(idx, next)}
                     onRemove={() => handleRemove(idx)}
@@ -465,9 +654,9 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
                           <SelectValue placeholder="Select retention agent" />
                         </SelectTrigger>
                         <SelectContent position="popper">
-                          {agents.map((opt) => (
+                          {filteredAgentsByAgency.map((opt) => (
                             <SelectItem key={opt.id} value={opt.id}>
-                              {opt.display_name ?? opt.id}
+                              {opt.display_name ?? opt.id} {opt.assigned_agency ? `(${opt.assigned_agency})` : ""}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -490,10 +679,10 @@ export function CallBackBulkAssignModal(props: CallBackBulkAssignModalProps) {
               }
 
               return (
-                <BulkAssignAllocationRow
+                <PercentAllocationRow
                   key={idx}
                   value={{ agentId: a.agentId, percent: a.percent }}
-                  agents={agents}
+                  agents={filteredAgentsByAgency}
                   disabled={running}
                   onChange={(next) => handleChange(idx, { ...a, agentId: next.agentId, percent: next.percent })}
                   onRemove={() => handleRemove(idx)}
