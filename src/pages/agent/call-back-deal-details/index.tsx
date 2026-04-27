@@ -68,7 +68,7 @@ export default function AgentCallBackDealDetailsPage() {
     toastRef.current = toast;
   }, [toast]);
 
-  const { retentionAgent } = useRetentionAgent();
+  const { retentionAgent, retentionAgentId } = useRetentionAgent();
 
   const rawQueryId = router.query.id;
   const idParam = React.useMemo(() => {
@@ -756,6 +756,7 @@ export default function AgentCallBackDealDetailsPage() {
                                   ghl_stage: deal?.stage ?? null,
                                 }}
                                 retentionAgent={retentionAgent}
+                                retentionAgentId={retentionAgentId}
                                 verificationSessionId={null}
                                 verificationItems={verificationItems}
                                 verificationInputValues={verificationInputValues}
@@ -822,7 +823,7 @@ export default function AgentCallBackDealDetailsPage() {
         submissionId={deal?.submission_id ?? ""}
         clientName={deal?.name ?? null}
         phoneNumber={deal?.phone_number ?? null}
-        agentName={retentionAgent}
+        agentProfileId={retentionAgentId}
         onSuccess={() => {
           void loadEverything();
         }}

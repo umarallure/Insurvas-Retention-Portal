@@ -39,31 +39,39 @@
        </div>
  
        <div className="mb-6">
-         <NavigationMenu>
-           <NavigationMenuList className="gap-1">
-             <NavigationMenuItem>
-               <NavigationMenuLink
-                 asChild
-                 className={navItemClass(isActive("/agent/assigned-leads"))}
-               >
-                 <Link href="/agent/assigned-leads">Assigned Leads</Link>
-               </NavigationMenuLink>
-             </NavigationMenuItem>
-             <NavigationMenuItem>
-               <NavigationMenuLink
-                 asChild
-                 className={navItemClass(isActive("/agent/assigned-lead-details"))}
-               >
-                 <Link href="/agent/assigned-lead-details">Lead Details</Link>
-               </NavigationMenuLink>
-             </NavigationMenuItem>
-             <NavigationMenuItem>
-               <NavigationMenuLink asChild className={navItemClass(isActive("/agent/call-update"))}>
-                 <Link href="/agent/call-update">Call Update</Link>
-               </NavigationMenuLink>
-             </NavigationMenuItem>
-           </NavigationMenuList>
-         </NavigationMenu>
+<NavigationMenu>
+            <NavigationMenuList className="gap-1">
+              <NavigationMenuItem>
+                <NavigationMenuLink
+                  asChild
+                  className={navItemClass(isActive("/agent/call-back-deals"))}
+                >
+                  <Link href="/agent/call-back-deals">New Sales Deal</Link>
+                </NavigationMenuLink>
+              </NavigationMenuItem>
+              <NavigationMenuItem>
+                <NavigationMenuLink
+                  asChild
+                  className={navItemClass(isActive("/agent/failed-payment-fixes"))}
+                >
+                  <Link href="/agent/failed-payment-fixes">Failed Payment Fixes</Link>
+                </NavigationMenuLink>
+              </NavigationMenuItem>
+              <NavigationMenuItem>
+                <NavigationMenuLink
+                  asChild
+                  className={navItemClass(isActive("/agent/callback-calendar"))}
+                >
+                  <Link href="/agent/callback-calendar">Callback Calendar</Link>
+                </NavigationMenuLink>
+              </NavigationMenuItem>
+              <NavigationMenuItem>
+                <NavigationMenuLink asChild className={navItemClass(isActive("/agent/call-update"))}>
+                  <Link href="/agent/call-update">Call Update</Link>
+                </NavigationMenuLink>
+              </NavigationMenuItem>
+            </NavigationMenuList>
+          </NavigationMenu>
        </div>
  
        <div className="flex flex-col gap-4 sm:gap-6 lg:gap-12 w-full lg:max-w-4xl mx-auto">

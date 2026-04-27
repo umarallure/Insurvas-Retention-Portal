@@ -10,29 +10,43 @@ import { supabase } from "@/lib/supabase";
 import { Loader2, UserMinus } from "lucide-react";
 
 const STAGE_OPTIONS = [
-  "Incomplete Transfer",
-  "Application Withdrawn",
-  "Needs BPO Callback",
-  "Declined Underwriting",
+  "Chargeback Cancellation",
+  "Chargeback Failed Payment",
+  "FDPF Incorrect Banking Info",
+  "FDPF Insufficient Funds",
+  "FDPF Pending Reason",
+  "Pending Lapse Incorrect Banking Info",
+  "Pending Lapse Insufficient Funds",
+  "Pending Lapse Pending Reason",
+  "Pending Lapse Unauthorized Draft",
+  "Pending Manual Action",
 ];
 
-type CallBackDealRow = {
+const AGENCY_OPTIONS = [
+  "Heritage Insurance",
+  "Safe Harbor Insurance",
+  "Unlimited Insurance",
+];
+
+type FailedPaymentFixRow = {
   id: string;
   name: string | null;
   phone_number: string | null;
-  submission_id: string;
-  stage: string | null;
+  policy_number: string;
+  ghl_stage: string | null;
   assigned: boolean;
   is_active: boolean;
+  assigned_agency: string | null;
   assigned_to_profile_id: string | null;
 };
 
 type ProfileRow = {
   id: string;
   display_name: string | null;
+  assigned_agency: string | null;
 };
 
-type CallBackBulkUnassignModalProps = {
+type BulkUnassignModalProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCompleted?: () => void;
@@ -45,7 +59,7 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
-export function CallBackBulkUnassignModal(props: CallBackBulkUnassignModalProps) {
+export function FailedPaymentFixBulkUnassignModal(props: BulkUnassignModalProps) {
   const { toast } = useToast();
   const { open, onOpenChange, onCompleted } = props;
 
@@ -56,10 +70,11 @@ export function CallBackBulkUnassignModal(props: CallBackBulkUnassignModalProps)
 
   const [loading, setLoading] = React.useState(false);
   const [unassigning, setUnassigning] = React.useState(false);
-  const [assignedDeals, setAssignedDeals] = React.useState<CallBackDealRow[]>([]);
+  const [assignedDeals, setAssignedDeals] = React.useState<FailedPaymentFixRow[]>([]);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
   const [selectAll, setSelectAll] = React.useState(false);
   const [stageFilter, setStageFilter] = React.useState<string>("all");
+  const [agencyFilter, setAgencyFilter] = React.useState<string>("all");
   const [agentFilter, setAgentFilter] = React.useState<string>("all");
   const [agents, setAgents] = React.useState<ProfileRow[]>([]);
 
@@ -70,6 +85,7 @@ export function CallBackBulkUnassignModal(props: CallBackBulkUnassignModalProps)
     setLoading(false);
     setUnassigning(false);
     setStageFilter("all");
+    setAgencyFilter("all");
     setAgentFilter("all");
   }, []);
 
@@ -77,60 +93,15 @@ export function CallBackBulkUnassignModal(props: CallBackBulkUnassignModalProps)
     if (!open) reset();
   }, [open, reset]);
 
-  const loadAssignedDeals = React.useCallback(async () => {
-    setLoading(true);
-    try {
-      const PAGE_SIZE = 1000;
-      let offset = 0;
-      const all: CallBackDealRow[] = [];
-
-      while (true) {
-        const { data, error, count } = await supabase
-          .from("call_back_deals")
-          .select("id, name, phone_number, submission_id, stage, assigned, is_active, assigned_to_profile_id", { count: "exact" })
-          .eq("assigned", true)
-          .eq("is_active", true)
-          .order("last_synced_at", { ascending: false, nullsFirst: false })
-          .range(offset, offset + PAGE_SIZE - 1);
-
-        if (error) throw error;
-
-        const rows = (data ?? []) as CallBackDealRow[];
-        all.push(...rows);
-
-        if (rows.length < PAGE_SIZE) break;
-        offset += PAGE_SIZE;
-        if (offset > 50000) break;
-      }
-
-      setAssignedDeals(all);
-    } catch (e) {
-      console.error("[callback-bulk-unassign] loadAssignedDeals error", e);
-      toastRef.current({
-        title: "Failed to load",
-        description: "Could not load assigned call back deals.",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  React.useEffect(() => {
-    if (!open) return;
-    void loadAssignedDeals();
-    void loadAgents();
-  }, [open, loadAssignedDeals]);
-
   const loadAgents = React.useCallback(async () => {
     try {
       const { data: raRows, error: raError } = await supabase
         .from("retention_agents")
-        .select("profile_id")
+        .select("profile_id, assigned_agency")
         .eq("active", true);
 
       if (raError) {
-        console.error("[callback-bulk-unassign] loadAgents error", raError);
+        console.error("[failed-payment-fix-bulk-unassign] loadAgents error", raError);
         return;
       }
 
@@ -146,20 +117,90 @@ export function CallBackBulkUnassignModal(props: CallBackBulkUnassignModalProps)
         .in("id", profileIds);
 
       if (profilesError) {
-        console.error("[callback-bulk-unassign] loadAgents profiles error", profilesError);
+        console.error("[failed-payment-fix-bulk-unassign] loadAgents profiles error", profilesError);
         return;
+      }
+
+      const agencyByProfileId = new Map<string, string | null>();
+      for (const row of raRows ?? []) {
+        agencyByProfileId.set(row.profile_id, row.assigned_agency);
       }
 
       const mapped: ProfileRow[] = (profileRows ?? []).map((p) => ({
         id: p.id as string,
         display_name: (p.display_name as string | null) ?? null,
+        assigned_agency: agencyByProfileId.get(p.id) ?? null,
       }));
 
       setAgents(mapped);
     } catch (e) {
-      console.error("[callback-bulk-unassign] loadAgents error", e);
+      console.error("[failed-payment-fix-bulk-unassign] loadAgents error", e);
     }
   }, []);
+
+  const loadAssignedDeals = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const PAGE_SIZE = 1000;
+      let offset = 0;
+      const all: FailedPaymentFixRow[] = [];
+
+      while (true) {
+        const { data, error, count } = await supabase
+          .from("failed_payment_fixes")
+          .select("id, name, phone_number, policy_number, ghl_stage, assigned, is_active, assigned_agency, assigned_to_profile_id", { count: "exact" })
+          .eq("assigned", true)
+          .eq("is_active", true)
+          .order("created_at", { ascending: false, nullsFirst: false })
+          .range(offset, offset + PAGE_SIZE - 1);
+
+        if (error) throw error;
+
+        const rows = (data ?? []) as FailedPaymentFixRow[];
+        all.push(...rows);
+
+        if (rows.length < PAGE_SIZE) break;
+        offset += PAGE_SIZE;
+        if (offset > 50000) break;
+      }
+
+      setAssignedDeals(all);
+    } catch (e) {
+      console.error("[failed-payment-fix-bulk-unassign] loadAssignedDeals error", e);
+      toastRef.current({
+        title: "Failed to load",
+        description: "Could not load assigned failed payment fixes.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (!open) return;
+    void loadAssignedDeals();
+    void loadAgents();
+  }, [open, loadAssignedDeals, loadAgents]);
+
+  const filteredDeals = React.useMemo(() => {
+    let deals = assignedDeals;
+    if (stageFilter !== "all") {
+      deals = deals.filter((d) => d.ghl_stage === stageFilter);
+    }
+    if (agencyFilter !== "all") {
+      deals = deals.filter((d) => d.assigned_agency === agencyFilter);
+    }
+    if (agentFilter !== "all") {
+      deals = deals.filter((d) => d.assigned_to_profile_id === agentFilter);
+    }
+    return deals;
+  }, [assignedDeals, stageFilter, agencyFilter, agentFilter]);
+
+  React.useEffect(() => {
+    setSelectAll(false);
+    setSelectedIds(new Set());
+  }, [stageFilter, agencyFilter, agentFilter]);
 
   const handleToggleSelectAll = () => {
     if (selectAll) {
@@ -170,22 +211,6 @@ export function CallBackBulkUnassignModal(props: CallBackBulkUnassignModalProps)
       setSelectAll(true);
     }
   };
-
-  const filteredDeals = React.useMemo(() => {
-    let deals = assignedDeals;
-    if (stageFilter !== "all") {
-      deals = deals.filter((d) => d.stage === stageFilter);
-    }
-    if (agentFilter !== "all") {
-      deals = deals.filter((d) => d.assigned_to_profile_id === agentFilter);
-    }
-    return deals;
-  }, [assignedDeals, stageFilter, agentFilter]);
-
-  React.useEffect(() => {
-    setSelectAll(false);
-    setSelectedIds(new Set());
-  }, [stageFilter, agentFilter]);
 
   const handleToggleRow = (id: string) => {
     const newSet = new Set(selectedIds);
@@ -212,11 +237,13 @@ export function CallBackBulkUnassignModal(props: CallBackBulkUnassignModalProps)
 
       for (const batch of chunk(idsToUnassign, 200)) {
         const { error } = await supabase
-          .from("call_back_deals")
+          .from("failed_payment_fixes")
           .update({
             assigned: false,
             assigned_to_profile_id: null,
+            assigned_by_profile_id: null,
             assigned_at: null,
+            is_active: false,
           })
           .in("id", batch);
 
@@ -225,16 +252,16 @@ export function CallBackBulkUnassignModal(props: CallBackBulkUnassignModalProps)
 
       toastRef.current({
         title: "Bulk unassign complete",
-        description: `Unassigned ${idsToUnassign.length} call back deal(s).`,
+        description: `Unassigned ${idsToUnassign.length} failed payment fix(es).`,
       });
 
       onOpenChange(false);
       onCompleted?.();
     } catch (e) {
-      console.error("[callback-bulk-unassign] unassign error", e);
+      console.error("[failed-payment-fix-bulk-unassign] unassign error", e);
       toastRef.current({
         title: "Bulk unassign failed",
-        description: "Could not unassign call back deals. Please try again.",
+        description: "Could not unassign failed payment fixes. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -246,7 +273,7 @@ export function CallBackBulkUnassignModal(props: CallBackBulkUnassignModalProps)
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[720px] max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
-          <DialogTitle>Bulk Unassign New Sale Deals</DialogTitle>
+          <DialogTitle>Bulk Unassign Failed Payment Fixes</DialogTitle>
         </DialogHeader>
 
         <div className="flex-1 overflow-hidden flex flex-col gap-4">
@@ -273,6 +300,26 @@ export function CallBackBulkUnassignModal(props: CallBackBulkUnassignModalProps)
             </div>
             <div className="flex items-center gap-2">
               <div className="text-sm">
+                <div className="font-medium">Agency</div>
+                <div className="text-muted-foreground">
+                  <Select value={agencyFilter} onValueChange={setAgencyFilter}>
+                    <SelectTrigger className="w-[200px]">
+                      <SelectValue placeholder="All Agencies" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Agencies</SelectItem>
+                      {AGENCY_OPTIONS.map((agency) => (
+                        <SelectItem key={agency} value={agency}>
+                          {agency}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="text-sm">
                 <div className="font-medium">Agent</div>
                 <div className="text-muted-foreground">
                   <Select value={agentFilter} onValueChange={setAgentFilter}>
@@ -283,7 +330,7 @@ export function CallBackBulkUnassignModal(props: CallBackBulkUnassignModalProps)
                       <SelectItem value="all">All Agents</SelectItem>
                       {agents.map((agent) => (
                         <SelectItem key={agent.id} value={agent.id}>
-                          {agent.display_name ?? agent.id}
+                          {agent.display_name ?? agent.id} {agent.assigned_agency ? `(${agent.assigned_agency})` : ""}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -326,7 +373,7 @@ export function CallBackBulkUnassignModal(props: CallBackBulkUnassignModalProps)
               </div>
             ) : filteredDeals.length === 0 ? (
               <div className="p-4 text-sm text-muted-foreground text-center">
-                {assignedDeals.length === 0 ? "No assigned call back deals found." : "No deals match the selected stage filter."}
+                {assignedDeals.length === 0 ? "No assigned failed payment fixes found." : "No deals match the selected filters."}
               </div>
             ) : (
               <table className="w-full text-sm">
@@ -342,8 +389,9 @@ export function CallBackBulkUnassignModal(props: CallBackBulkUnassignModalProps)
                     </th>
                     <th className="text-left px-3 py-2 font-medium">Name</th>
                     <th className="text-left px-3 py-2 font-medium">Phone</th>
+                    <th className="text-left px-3 py-2 font-medium">Policy #</th>
+                    <th className="text-left px-3 py-2 font-medium">Agency</th>
                     <th className="text-left px-3 py-2 font-medium">Stage</th>
-                    <th className="text-left px-3 py-2 font-medium">Submission ID</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -364,9 +412,10 @@ export function CallBackBulkUnassignModal(props: CallBackBulkUnassignModalProps)
                           />
                         </td>
                         <td className="px-3 py-2 truncate max-w-[200px]">{deal.name ?? "Unknown"}</td>
-                        <td className="px-3 py-2 truncate max-w-[150px]">{deal.phone_number ?? "-"}</td>
-                        <td className="px-3 py-2 truncate max-w-[150px]">{deal.stage ?? "-"}</td>
-                        <td className="px-3 py-2 truncate max-w-[150px] font-mono text-xs">{deal.submission_id}</td>
+                        <td className="px-3 py-2 truncate max-w-[150px] font-mono text-xs">{deal.phone_number ?? "-"}</td>
+                        <td className="px-3 py-2 truncate max-w-[150px] font-mono text-xs">{deal.policy_number}</td>
+                        <td className="px-3 py-2 truncate max-w-[150px]">{deal.assigned_agency ?? "-"}</td>
+                        <td className="px-3 py-2 truncate max-w-[180px] text-xs">{deal.ghl_stage ?? "-"}</td>
                       </tr>
                     );
                   })}
@@ -378,7 +427,7 @@ export function CallBackBulkUnassignModal(props: CallBackBulkUnassignModalProps)
           <div className="rounded-md border border-red-200 bg-red-50/50 p-3">
             <div className="text-sm font-medium text-red-800">Danger zone</div>
             <div className="text-xs text-red-600 mt-1">
-              This will unassign the selected call back deal(s). They will become available for reassignment.
+              This will unassign the selected failed payment fix(es). They will become available for reassignment.
             </div>
           </div>
         </div>

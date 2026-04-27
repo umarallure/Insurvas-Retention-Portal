@@ -76,58 +76,13 @@ export async function checkTcpaStatus(rawPhone: string | null | undefined): Prom
 
   const checkErrors: string[] = [];
   const payloads: Array<Record<string, unknown>> = [];
-  let transferCheckPayload: Record<string, unknown> | null = null;
 
-  const [blacklistResult, transferCheckResult] = await Promise.allSettled([
-    supabase.functions.invoke("blacklist-check", { body: { mobileNumber: normalizedPhone } }),
-    fetch("https://livetransferchecker.vercel.app/api/transfer-check", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone: normalizedPhone }),
-    }),
-  ]);
+  const blacklistResult = await supabase.functions.invoke("blacklist-check", { body: { mobileNumber: normalizedPhone } });
 
-  if (blacklistResult.status === "fulfilled") {
-    const { data, error } = blacklistResult.value;
-    if (error) {
-      checkErrors.push(`blacklist-check: ${error.message || "unknown error"}`);
-    } else {
-      payloads.push(...collectPayloadCandidates(data));
-    }
-  } else {
-    checkErrors.push(
-      `blacklist-check: ${
-        blacklistResult.reason instanceof Error ? blacklistResult.reason.message : "unknown error"
-      }`,
-    );
-  }
-
-  if (transferCheckResult.status === "fulfilled") {
-    try {
-      const transferResponse = transferCheckResult.value;
-      const transferJson = (await transferResponse.json()) as unknown;
-      const parsedTransfer = asRecord(transferJson);
-      if (!transferResponse.ok) {
-        const message =
-          parsedTransfer && typeof parsedTransfer.message === "string"
-            ? parsedTransfer.message
-            : `status ${transferResponse.status}`;
-        checkErrors.push(`transfer-check: ${message}`);
-      } else if (parsedTransfer) {
-        transferCheckPayload = parsedTransfer;
-        payloads.push(...collectPayloadCandidates(parsedTransfer));
-      }
-    } catch (error) {
-      checkErrors.push(
-        `transfer-check: ${error instanceof Error ? error.message : "unable to parse response"}`,
-      );
-    }
-  } else {
-    checkErrors.push(
-      `transfer-check: ${
-        transferCheckResult.reason instanceof Error ? transferCheckResult.reason.message : "unknown error"
-      }`,
-    );
+  if (blacklistResult.error) {
+    checkErrors.push(`blacklist-check: ${blacklistResult.error.message || "unknown error"}`);
+  } else if (blacklistResult.data) {
+    payloads.push(...collectPayloadCandidates(blacklistResult.data));
   }
 
   if (payloads.length === 0) {
@@ -183,10 +138,7 @@ export async function checkTcpaStatus(rawPhone: string | null | undefined): Prom
       hasTcpaPhrase(nestedDnc?.message)
     );
   });
-  const transferDnc = asRecord(transferCheckPayload?.dnc);
-  const isTcpaFromTransfer = hasTcpaPhrase(transferDnc?.message);
-
-  const isTcpa = isTcpaFromNormalized || isTcpaFromLists || isTcpaFromMessage || isTcpaFromTransfer;
+  const isTcpa = isTcpaFromNormalized || isTcpaFromLists || isTcpaFromMessage;
   const isDnc = isDncFromNormalized || isDncFromLists;
 
   const status: TcpaStatus = isTcpa ? "tcpa" : isDnc ? "dnc" : "clear";

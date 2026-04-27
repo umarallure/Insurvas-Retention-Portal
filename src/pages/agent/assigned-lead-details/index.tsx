@@ -248,6 +248,7 @@ export default function AssignedLeadDetailsPage() {
                                 lead={lead}
                                 selectedDeal={selectedDeal}
                                 retentionAgent={retentionAgent}
+                                retentionAgentId={retentionAgentId}
                                 verificationSessionId={verificationSessionId}
                                 verificationItems={verificationItems}
                                 verificationInputValues={verificationInputValues}

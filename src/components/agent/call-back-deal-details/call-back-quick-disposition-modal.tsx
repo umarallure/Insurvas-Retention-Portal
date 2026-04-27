@@ -11,6 +11,14 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { Loader2 } from "lucide-react";
@@ -40,13 +48,24 @@ const DISPOSITION_OPTIONS: Array<{ value: Disposition; label: string }> = [
   { value: " DQ", label: " DQ" },
 ];
 
+const REASON_OPTIONS = [
+  "Busy",
+  "Client not available",
+  "Need to gather documents",
+  "Need to verify information",
+  "Waiting on carrier",
+  "Need supervisor approval",
+  "Schedule callback",
+  "Other",
+];
+
 type CallBackQuickDispositionModalProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   submissionId: string;
   clientName: string | null;
   phoneNumber: string | null;
-  agentName: string;
+  agentProfileId: string;
   onSuccess?: () => void;
 };
 
@@ -56,19 +75,50 @@ export function CallBackQuickDispositionModal({
   submissionId,
   clientName,
   phoneNumber,
-  agentName,
+  agentProfileId,
   onSuccess,
 }: CallBackQuickDispositionModalProps) {
   const { toast } = useToast();
   const [selectedDisposition, setSelectedDisposition] = React.useState<Disposition | "">("");
+  const [reason, setReason] = React.useState("");
   const [notes, setNotes] = React.useState("");
+  const [callbackDatetime, setCallbackDatetime] = React.useState("");
   const [saving, setSaving] = React.useState(false);
+
+  const showCallbackDatetime = selectedDisposition === "callback";
 
   const handleSave = async () => {
     if (!selectedDisposition) {
       toast({
         title: "Error",
         description: "Please select a disposition",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!notes.trim()) {
+      toast({
+        title: "Error",
+        description: "Please add notes",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!reason) {
+      toast({
+        title: "Error",
+        description: "Please select a reason",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (showCallbackDatetime && !callbackDatetime) {
+      toast({
+        title: "Error",
+        description: "Please select a callback date and time",
         variant: "destructive",
       });
       return;
@@ -84,7 +134,7 @@ export function CallBackQuickDispositionModal({
         client_phone_number: phoneNumber || null,
         insured_name: clientName || null,
         date: today,
-        retention_agent: agentName,
+        retention_agent: agentProfileId,
         notes: notes.trim() || null,
         status: selectedDisposition,
         call_result: selectedDisposition,
@@ -95,6 +145,22 @@ export function CallBackQuickDispositionModal({
 
       if (error) throw error;
 
+      if (showCallbackDatetime && callbackDatetime) {
+        const estScheduled = new Date(new Date(callbackDatetime).getTime() - 4 * 60 * 60 * 1000);
+        const { error: scheduleError } = await supabase.from("callback_schedule").insert({
+          submission_id: submissionId,
+          client_name: clientName || null,
+          phone_number: phoneNumber || null,
+          agent_profile_id: agentProfileId,
+          scheduled_at: new Date(estScheduled).toISOString(),
+          status: "scheduled",
+        });
+
+        if (scheduleError) {
+          console.error("Error saving callback schedule:", scheduleError);
+        }
+      }
+
       toast({
         title: "Success",
         description: `Disposition "${selectedDisposition}" saved successfully`,
@@ -102,7 +168,9 @@ export function CallBackQuickDispositionModal({
 
       onOpenChange(false);
       setSelectedDisposition("");
+      setReason("");
       setNotes("");
+      setCallbackDatetime("");
       onSuccess?.();
     } catch (error) {
       console.error("Error saving disposition:", error);
@@ -119,7 +187,9 @@ export function CallBackQuickDispositionModal({
   React.useEffect(() => {
     if (!open) {
       setSelectedDisposition("");
+      setReason("");
       setNotes("");
+      setCallbackDatetime("");
     }
   }, [open]);
 
@@ -159,15 +229,45 @@ export function CallBackQuickDispositionModal({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="notes">Notes</Label>
+            <Label htmlFor="reason">Reason *</Label>
+            <Select value={reason} onValueChange={setReason}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select a reason" />
+              </SelectTrigger>
+              <SelectContent>
+                {REASON_OPTIONS.map((r) => (
+                  <SelectItem key={r} value={r}>
+                    {r}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="notes">Notes *</Label>
             <Textarea
               id="notes"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Add any notes..."
               className="min-h-[100px]"
+              required
             />
           </div>
+
+          {showCallbackDatetime && (
+            <div className="space-y-2">
+              <Label htmlFor="callback">Callback Date & Time *</Label>
+              <Input
+                id="callback"
+                type="datetime-local"
+                value={callbackDatetime}
+                onChange={(e) => setCallbackDatetime(e.target.value)}
+                required
+              />
+            </div>
+          )}
         </div>
 
         <div className="flex gap-2">
@@ -181,7 +281,7 @@ export function CallBackQuickDispositionModal({
           </Button>
           <Button
             onClick={handleSave}
-            disabled={!selectedDisposition || saving}
+            disabled={!selectedDisposition || !reason || !notes.trim() || saving}
             className="flex-1"
           >
             {saving ? (

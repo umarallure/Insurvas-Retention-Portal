@@ -106,9 +106,10 @@ export function AppHeaderNav() {
                 icon={<HeadsetIcon className="h-4 w-4" />}
                 isActive={isActive("/agent") && !isActive("/agent/dialer")}
                 items={[
-                  { href: "/agent/assigned-leads", label: "Assigned Leads" },
-                  { href: "/agent/call-back-deals", label: "Call Back Deals" },
+                  { href: "/agent/call-back-deals", label: "New Sales Deal" },
+                  { href: "/agent/failed-payment-fixes", label: "Failed Payment Fixes" },
                   { href: "/agent/daily-retention-fixes", label: "Daily Retention Fixes" },
+                  { href: "/agent/callback-calendar", label: "Callback Calendar" },
                 ]}
               />
             </>

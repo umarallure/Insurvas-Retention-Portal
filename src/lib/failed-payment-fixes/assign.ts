@@ -1,15 +1,15 @@
 import { supabase } from "@/lib/supabase";
 import { checkTcpaStatus, type TcpaCheckResult } from "./tcpa";
 
-export type AssignCallBackDealInput = {
-  callBackDealId: string;
+export type AssignFailedPaymentFixInput = {
+  failedPaymentFixId: string;
   assigneeProfileId: string;
   assignedByProfileId: string;
   phoneNumber: string | null;
   skipTcpa?: boolean;
 };
 
-export type AssignCallBackDealResult =
+export type AssignFailedPaymentFixResult =
   | {
       ok: true;
       action: "assigned";
@@ -27,27 +27,23 @@ export type AssignCallBackDealResult =
       tcpa?: TcpaCheckResult;
     };
 
-/**
- * Runs a TCPA check first, then assigns the call-back deal to the given agent.
- * If TCPA is detected, the row is marked `is_active = false, tcpa_flag = true` and
- * the assignment is blocked. DNC alone does NOT block.
- * If skipTcpa is true, TCPA check is skipped.
- */
-export async function assignCallBackDeal(input: AssignCallBackDealInput): Promise<AssignCallBackDealResult> {
+export async function assignFailedPaymentFix(
+  input: AssignFailedPaymentFixInput
+): Promise<AssignFailedPaymentFixResult> {
   const tcpa = input.skipTcpa
     ? { status: "clear" as const, message: "", normalizedPhone: null, errors: [] }
     : await checkTcpaStatus(input.phoneNumber);
 
   if (tcpa.status === "tcpa") {
     const { error } = await supabase
-      .from("call_back_deals")
+      .from("failed_payment_fixes")
       .update({
         is_active: false,
         tcpa_flag: true,
         tcpa_checked_at: new Date().toISOString(),
         tcpa_message: tcpa.message.slice(0, 2000),
       })
-      .eq("id", input.callBackDealId);
+      .eq("id", input.failedPaymentFixId);
 
     if (error) {
       return {
@@ -63,7 +59,7 @@ export async function assignCallBackDeal(input: AssignCallBackDealInput): Promis
 
   const nowIso = new Date().toISOString();
   const { error } = await supabase
-    .from("call_back_deals")
+    .from("failed_payment_fixes")
     .update({
       assigned: true,
       assigned_to_profile_id: input.assigneeProfileId,
@@ -73,7 +69,7 @@ export async function assignCallBackDeal(input: AssignCallBackDealInput): Promis
       tcpa_checked_at: nowIso,
       tcpa_message: tcpa.status === "dnc" ? tcpa.message.slice(0, 2000) : null,
     })
-    .eq("id", input.callBackDealId);
+    .eq("id", input.failedPaymentFixId);
 
   if (error) {
     return { ok: false, action: "error", error: `Assignment failed: ${error.message}`, tcpa };
@@ -82,9 +78,11 @@ export async function assignCallBackDeal(input: AssignCallBackDealInput): Promis
   return { ok: true, action: "assigned", tcpa };
 }
 
-export async function unassignCallBackDeal(callBackDealId: string): Promise<{ ok: boolean; error?: string }> {
+export async function unassignFailedPaymentFix(
+  failedPaymentFixId: string
+): Promise<{ ok: boolean; error?: string }> {
   const { error } = await supabase
-    .from("call_back_deals")
+    .from("failed_payment_fixes")
     .update({
       assigned: false,
       assigned_to_profile_id: null,
@@ -92,7 +90,7 @@ export async function unassignCallBackDeal(callBackDealId: string): Promise<{ ok
       assigned_at: null,
       is_active: false,
     })
-    .eq("id", callBackDealId);
+    .eq("id", failedPaymentFixId);
 
   if (error) return { ok: false, error: error.message };
   return { ok: true };

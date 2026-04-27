@@ -36,6 +36,7 @@ type NewSaleWorkflowProps = {
   policyNumber: string | null;
   callCenter: string | null;
   retentionAgent: string;
+  retentionAgentId: string;
   verificationSessionId: string | null;
   customerName: string | null;
   submissionId: string | null;
@@ -51,6 +52,7 @@ export function NewSaleWorkflow({
   policyNumber,
   callCenter,
   retentionAgent,
+  retentionAgentId,
   verificationSessionId,
   customerName,
   submissionId,
@@ -79,104 +81,56 @@ export function NewSaleWorkflow({
       if (sessionError) throw sessionError;
       if (!session?.access_token) throw new Error("Not authenticated.");
 
-      let effectiveLeadId = leadId;
-      let effectiveSubmissionId = submissionId;
-
+      // Fetch verification items from the database
+      let leadData: Record<string, string> = {};
+      
       if (callBackDealId) {
-        const createResp = await fetch("/api/call-back-deals/create-new-sale-lead", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({
-            callBackDealId,
-            quote: {
-              carrier: quoteCarrier,
-              product: quoteProduct,
-              coverage: quoteCoverage,
-              monthlyPremium: quotePremium,
-              draftDate,
-              notes: quoteNotes,
-            },
-          }),
-        });
+        const { data: verificationItems } = await supabase
+          .from("call_back_deal_verification_items")
+          .select("field_name, verified_value, original_value")
+          .eq("call_back_deal_id", callBackDealId);
 
-        const createPayload = (await createResp.json().catch(() => null)) as
-          | { ok: true; leadId: string; submissionId: string | null }
-          | { ok: false; error: string }
-          | null;
-
-        if (!createResp.ok || !createPayload || !("ok" in createPayload) || createPayload.ok === false) {
-          throw new Error(
-            createPayload && "error" in createPayload ? createPayload.error : `Create lead failed (${createResp.status})`,
-          );
+        if (verificationItems) {
+          for (const item of verificationItems) {
+            const value = item.verified_value?.trim() || item.original_value?.trim() || "";
+            if (value && item.field_name) {
+              leadData[item.field_name] = value;
+            }
+          }
         }
-
-        effectiveLeadId = createPayload.leadId;
-        effectiveSubmissionId = createPayload.submissionId ?? null;
       }
 
-      const response = await fetch("/api/retention-call-notification", {
+      // Call the Edge Function
+      const edgeFunctionUrl = "https://agnefzuxoimnmfarqaxz.supabase.co/functions/v1/retnetion-new-sale-connector";
+      
+      const response = await fetch(edgeFunctionUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
+          "Authorization": `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
-          type: "buffer_connected",
-          leadId: effectiveLeadId,
-          dealId,
-          submissionId: effectiveSubmissionId,
-          policyNumber,
-          callCenter,
           retentionAgent,
-          verificationSessionId,
-          customerName,
-          retentionType: "new_sale",
-          retentionNotes: quoteNotes,
-          updateCallResultUrl: `https://agents-portal-zeta.vercel.app/call-result-update?submissionId=${encodeURIComponent(
-            effectiveSubmissionId ?? "",
-          )}`,
-          callBackDealId: callBackDealId ?? null,
-          quoteDetails: {
-            carrier: quoteCarrier,
-            product: quoteProduct,
-            coverage: quoteCoverage,
-            monthlyPremium: quotePremium,
-            draftDate,
-          },
-        }),
-      });
-
-      const payload = (await response.json().catch(() => null)) as
-        | { ok: true }
-        | { ok: false; error: string }
-        | null;
-
-      if (!response.ok || !payload || ("ok" in payload && payload.ok === false)) {
-        throw new Error(payload && "error" in payload ? payload.error : `Submit failed (${response.status})`);
-      }
-
-      if (onAfterSubmit && !callBackDealId) {
-        try {
-          await onAfterSubmit({
+          retentionAgentId,
+          quote: {
             carrier: quoteCarrier,
             product: quoteProduct,
             coverage: quoteCoverage,
             monthlyPremium: quotePremium,
             draftDate,
             notes: quoteNotes,
-          });
-        } catch (afterError) {
-          console.error("[NewSaleWorkflow] onAfterSubmit error", afterError);
-          toast({
-            title: "Saved notification, but post-submit step failed",
-            description:
-              afterError instanceof Error ? afterError.message : "An error occurred after submission.",
-            variant: "destructive",
-          });
-        }
+          },
+          leadData,
+        }),
+      });
+
+      const result = (await response.json().catch(() => null)) as
+        | { ok: true }
+        | { ok: false; error: string }
+        | null;
+
+      if (!response.ok || !result || ("ok" in result && result.ok === false)) {
+        throw new Error(result && "error" in result ? result.error : `Submit failed (${response.status})`);
       }
 
       toast({

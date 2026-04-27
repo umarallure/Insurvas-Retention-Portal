@@ -134,7 +134,7 @@ export function AppSidebar() {
           {canSeeAgent ? (
             <SidebarMenuItem>
               <SidebarMenuButton asChild isActive={isActive("/agent")} tooltip="Agent">
-                <Link href="/agent/assigned-leads">
+                <Link href="/agent/call-back-deals">
                   <HeadsetIcon />
                   <span>Agent</span>
                 </Link>
@@ -155,16 +155,23 @@ export function AppSidebar() {
               {agentOpen ? (
                 <SidebarMenuSub>
                   <SidebarMenuSubItem>
-                    <SidebarMenuSubButton asChild isActive={isActive("/agent/assigned-leads")}>
-                      <Link href="/agent/assigned-leads">
-                        <span>Assigned Leads</span>
+                    <SidebarMenuSubButton asChild isActive={isActive("/agent/call-back-deals")}>
+                      <Link href="/agent/call-back-deals">
+                        <span>New Sales Deal</span>
                       </Link>
                     </SidebarMenuSubButton>
                   </SidebarMenuSubItem>
                   <SidebarMenuSubItem>
-                    <SidebarMenuSubButton asChild isActive={isActive("/agent/call-back-deals")}>
-                      <Link href="/agent/call-back-deals">
-                        <span>Call Back Deals</span>
+                    <SidebarMenuSubButton asChild isActive={isActive("/agent/failed-payment-fixes")}>
+                      <Link href="/agent/failed-payment-fixes">
+                        <span>Failed Payment Fixes</span>
+                      </Link>
+                    </SidebarMenuSubButton>
+                  </SidebarMenuSubItem>
+                  <SidebarMenuSubItem>
+                    <SidebarMenuSubButton asChild isActive={isActive("/agent/callback-calendar")}>
+                      <Link href="/agent/callback-calendar">
+                        <span>Callback Calendar</span>
                       </Link>
                     </SidebarMenuSubButton>
                   </SidebarMenuSubItem>

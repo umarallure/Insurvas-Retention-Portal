@@ -1,0 +1,1 @@
+What tables exist in the CRM database? Use the supabase-crm MCP tool to list tables.

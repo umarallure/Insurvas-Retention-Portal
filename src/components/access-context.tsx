@@ -76,12 +76,12 @@ export function getDefaultLandingPath(access: AccessState): string {
 
 export const MANAGER_PAGES = [
   { path: "/manager/retention-daily-deal-flow", label: "Retention Deal Flow" },
-  { path: "/manager/assign-lead", label: "Assign Leads" },
-  { path: "/manager/call-back-deals", label: "Call Back Deals" },
+  { path: "/manager/call-back-deals", label: "New Sales Deal" },
   { path: "/manager/fixed-policies", label: "Fixed Policies" },
   { path: "/manager/agent-report-card", label: "Agent Report Card" },
   { path: "/manager/usermanagnent", label: "User Management" },
   { path: "/manager/lead-email-ghl-notes", label: "Lead Email / Notes" },
+  { path: "/manager/failed-payment-fixes", label: "Failed Payment Fixes" },
 ];
 
 export function AccessProvider({ children }: { children: React.ReactNode }) {
