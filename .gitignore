@@ -116,3 +116,4 @@ SECURITY.md
 
 # Supabase migrations
 supabase/migrations/
+supabase/functions/
