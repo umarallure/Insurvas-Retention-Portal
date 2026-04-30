@@ -167,7 +167,51 @@ export function PolicyCard({
   const dealIdForRoute = raw && typeof raw["id"] === "number" ? (raw["id"] as number) : null;
   const phoneNumberForRoute = raw && typeof raw["phone_number"] === "string" ? (raw["phone_number"] as string) : null;
   const agentNameForRoute = policy.agentName && policy.agentName !== "—" ? policy.agentName : "";
-  const writingNumberForRoute = raw && typeof raw["writing_no"] === "string" ? (raw["writing_no"] as string) : "";
+  const writingNumberForRoute = raw && typeof raw["writing_number"] === "string" ? (raw["writing_number"] as string) : "";
+
+  const AGENT_SSN_MAP: Record<string, string> = {
+    "andrea munoz bonilla": "1610",
+    "maria estrella sanchez santiago": "6980",
+    "aubrey nichols": "5624",
+    "trinity queen": "7901",
+    "noah brock": "6729",
+    "isaac reed": "1163",
+    "brandon flinchum": "5400",
+    "benjamin wunder": "9151",
+    "abdul rahman ibrahim": "1058",
+    "lydia sutton": "1730",
+  };
+
+  function tokenizeName(name: string): string[] {
+    return name
+      .toLowerCase()
+      .split(/[^a-z]+/)
+      .filter((t) => t.length > 1);
+  }
+
+  function getAgentSsnLast4(agentName: string): string {
+    if (!agentName) return "";
+    const inputTokens = tokenizeName(agentName);
+
+    for (const [mapName, ssn] of Object.entries(AGENT_SSN_MAP)) {
+      const mapTokens = tokenizeName(mapName);
+
+      // Single-word names: require exact token match
+      if (mapTokens.length === 1) {
+        if (inputTokens.includes(mapTokens[0])) return ssn;
+        continue;
+      }
+
+      // Count how many map tokens appear in the input
+      const overlap = mapTokens.filter((t) => inputTokens.includes(t)).length;
+
+      // Require at least 2 matching name parts
+      if (overlap >= 2) return ssn;
+    }
+    return "";
+  }
+
+  const agentSsnLast4 = getAgentSsnLast4(agentNameForRoute);
 
   const deal = {
     dealId: dealIdForRoute,
@@ -187,7 +231,7 @@ export function PolicyCard({
     ghlStage: selectedDeal?.ghl_stage ?? "",
     agentName: agentNameForRoute,
     writingNumber: writingNumberForRoute,
-    ssnLast4: ssnLast4ForRoute,
+    ssnLast4: agentSsnLast4 || ssnLast4ForRoute || "—",
     address: (addressFromVerification || (personalAddress1 !== "-" ? personalAddress1 : "")).trim(),
   };
 

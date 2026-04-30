@@ -60,32 +60,6 @@ const POLICY_STATUS_OPTIONS = [
   "Expired",
 ];
 
-const CARRIER_OPTIONS = [
-  "AIG",
-  "Allstate",
-  "American Family",
-  "Ameriprise",
-  "Auto Owners",
-  "Country Financial",
-  "Esurance",
-  "Farmers",
-  "GEICO",
-  "Hartford",
-  "Infinity",
-  "Kemper",
-  "Liberty Mutual",
-  "MetLife",
-  "Nationwide",
-  "Progressive",
-  "Prudential",
-  "Safeco",
-  "Sagicor",
-  "State Farm",
-  "Travelers",
-  "USAA",
-  "Other",
-];
-
 const PAGE_SIZE = 25;
 
 const AGENCY_OPTIONS = [
@@ -121,6 +95,7 @@ export default function ManagerFailedPaymentFixesPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
   const [carrierFilter, setCarrierFilter] = useState<string[]>([]);
+  const [ghlStageFilter, setGhlStageFilter] = useState<string[]>([]);
   const [agentFilter, setAgentFilter] = useState<string[]>([]);
   const [assignmentFilter, setAssignmentFilter] = useState<string>("all");
   const [agencyFilter, setAgencyFilter] = useState<string[]>([]);
@@ -128,6 +103,8 @@ export default function ManagerFailedPaymentFixesPage() {
 
   const [agents, setAgents] = useState<ProfileRow[]>([]);
   const [assigneeNameById, setAssigneeNameById] = useState<Map<string, string>>(new Map());
+  const [availableGhlStages, setAvailableGhlStages] = useState<string[]>([]);
+  const [availableCarriers, setAvailableCarriers] = useState<string[]>([]);
 
   const [statsLoading, setStatsLoading] = useState(false);
   const [stats, setStats] = useState<{
@@ -135,7 +112,8 @@ export default function ManagerFailedPaymentFixesPage() {
     assigned: number;
     unassigned: number;
     byAgent: Record<string, number>;
-  }>({ total: 0, assigned: 0, unassigned: 0, byAgent: {} });
+    byStage: Record<string, number>;
+  }>({ total: 0, assigned: 0, unassigned: 0, byAgent: {}, byStage: {} });
 
   const [modalOpen, setModalOpen] = useState(false);
   const [activeRow, setActiveRow] = useState<FailedPaymentFixRow | null>(null);
@@ -194,6 +172,37 @@ export default function ManagerFailedPaymentFixesPage() {
     setAgents(mapped);
   }, []);
 
+  const loadFilterOptions = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from("failed_payment_fixes")
+        .select("ghl_stage, carrier")
+        .eq("is_active", true);
+
+      if (error) {
+        console.error("[manager-failed-payment-fixes] loadFilterOptions error", error);
+        return;
+      }
+
+      const stages = new Set<string>();
+      const carriers = new Set<string>();
+
+      (data ?? []).forEach((row: { ghl_stage: string | null; carrier: string | null }) => {
+        if (typeof row.ghl_stage === "string" && row.ghl_stage.trim()) {
+          stages.add(row.ghl_stage.trim());
+        }
+        if (typeof row.carrier === "string" && row.carrier.trim()) {
+          carriers.add(row.carrier.trim());
+        }
+      });
+
+      setAvailableGhlStages(Array.from(stages).sort());
+      setAvailableCarriers(Array.from(carriers).sort());
+    } catch (error) {
+      console.error("[manager-failed-payment-fixes] loadFilterOptions error", error);
+    }
+  }, []);
+
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
     try {
@@ -204,6 +213,13 @@ export default function ManagerFailedPaymentFixesPage() {
         q = q.eq("is_active", true);
         if (statusFilter.length > 0) q = q.in("policy_status", statusFilter);
         if (carrierFilter.length > 0) q = q.in("carrier", carrierFilter);
+        if (ghlStageFilter.length > 0) q = q.in("ghl_stage", ghlStageFilter);
+        if (agentFilter.length > 0) q = q.in("assigned_to_profile_id", agentFilter);
+        if (assignmentFilter === "assigned") q = q.eq("assigned", true);
+        else if (assignmentFilter === "unassigned") q = q.eq("assigned", false);
+        if (agencyFilter.length > 0) q = q.in("assigned_agency", agencyFilter);
+        if (tcpaFilter === "flagged") q = q.eq("tcpa_flag", true);
+        else if (tcpaFilter === "clear") q = q.eq("tcpa_flag", false);
         if (trimmed) {
           const escaped = trimmed.replace(/,/g, "");
           q = q.or(`name.ilike.%${escaped}%,phone_number.ilike.%${escaped}%,policy_number.ilike.%${escaped}%`);
@@ -217,6 +233,41 @@ export default function ManagerFailedPaymentFixesPage() {
         buildBaseQuery().eq("assigned", false),
       ]);
 
+      // Count by GHL stage
+      let stageQuery = supabase
+        .from("failed_payment_fixes")
+        .select("ghl_stage")
+        .eq("is_active", true);
+
+      if (statusFilter.length > 0) stageQuery = stageQuery.in("policy_status", statusFilter);
+      if (carrierFilter.length > 0) stageQuery = stageQuery.in("carrier", carrierFilter);
+      if (ghlStageFilter.length > 0) stageQuery = stageQuery.in("ghl_stage", ghlStageFilter);
+      if (agentFilter.length > 0) stageQuery = stageQuery.in("assigned_to_profile_id", agentFilter);
+      if (assignmentFilter === "assigned") stageQuery = stageQuery.eq("assigned", true);
+      else if (assignmentFilter === "unassigned") stageQuery = stageQuery.eq("assigned", false);
+      if (agencyFilter.length > 0) stageQuery = stageQuery.in("assigned_agency", agencyFilter);
+      if (tcpaFilter === "flagged") stageQuery = stageQuery.eq("tcpa_flag", true);
+      else if (tcpaFilter === "clear") stageQuery = stageQuery.eq("tcpa_flag", false);
+      if (trimmed) {
+        const escaped = trimmed.replace(/,/g, "");
+        stageQuery = stageQuery.or(`name.ilike.%${escaped}%,phone_number.ilike.%${escaped}%,policy_number.ilike.%${escaped}%`);
+      }
+
+      const allStageRows: Array<{ ghl_stage: string | null }> = [];
+      let stageOffset = 0;
+      while (true) {
+        const { data } = await stageQuery.range(stageOffset, stageOffset + 1000 - 1);
+        if (data) allStageRows.push(...(data as Array<{ ghl_stage: string | null }>));
+        if (!data || data.length < 1000) break;
+        stageOffset += 1000;
+      }
+
+      const byStage: Record<string, number> = {};
+      allStageRows.forEach((row) => {
+        const stage = row.ghl_stage ?? "Unknown";
+        byStage[stage] = (byStage[stage] || 0) + 1;
+      });
+
       let agentQuery = supabase
         .from("failed_payment_fixes")
         .select("assigned_to_profile_id", { count: "exact" })
@@ -224,7 +275,13 @@ export default function ManagerFailedPaymentFixesPage() {
 
       if (statusFilter.length > 0) agentQuery = agentQuery.in("policy_status", statusFilter);
       if (carrierFilter.length > 0) agentQuery = agentQuery.in("carrier", carrierFilter);
+      if (ghlStageFilter.length > 0) agentQuery = agentQuery.in("ghl_stage", ghlStageFilter);
       if (agentFilter.length > 0) agentQuery = agentQuery.in("assigned_to_profile_id", agentFilter);
+      if (assignmentFilter === "assigned") agentQuery = agentQuery.eq("assigned", true);
+      else if (assignmentFilter === "unassigned") agentQuery = agentQuery.eq("assigned", false);
+      if (agencyFilter.length > 0) agentQuery = agentQuery.in("assigned_agency", agencyFilter);
+      if (tcpaFilter === "flagged") agentQuery = agentQuery.eq("tcpa_flag", true);
+      else if (tcpaFilter === "clear") agentQuery = agentQuery.eq("tcpa_flag", false);
       if (trimmed) {
         const escaped = trimmed.replace(/,/g, "");
         agentQuery = agentQuery.or(`name.ilike.%${escaped}%,phone_number.ilike.%${escaped}%,policy_number.ilike.%${escaped}%`);
@@ -278,13 +335,14 @@ export default function ManagerFailedPaymentFixesPage() {
         assigned: assignedResult.count ?? 0,
         unassigned: unassignedResult.count ?? 0,
         byAgent,
+        byStage,
       });
     } catch (error) {
       console.error("[manager-failed-payment-fixes] loadStats error", error);
     } finally {
       setStatsLoading(false);
     }
-  }, [statusFilter, carrierFilter, search, agentFilter]);
+  }, [statusFilter, carrierFilter, ghlStageFilter, search, agentFilter, assignmentFilter, agencyFilter, tcpaFilter]);
 
   const loadRows = useCallback(async () => {
     setLoading(true);
@@ -306,6 +364,10 @@ export default function ManagerFailedPaymentFixesPage() {
 
       if (carrierFilter.length > 0) {
         query = query.in("carrier", carrierFilter);
+      }
+
+      if (ghlStageFilter.length > 0) {
+        query = query.in("ghl_stage", ghlStageFilter);
       }
 
       if (agentFilter.length > 0) {
@@ -374,12 +436,13 @@ export default function ManagerFailedPaymentFixesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, statusFilter, carrierFilter, agentFilter, assignmentFilter, agencyFilter, tcpaFilter, search]);
+  }, [page, statusFilter, carrierFilter, ghlStageFilter, agentFilter, assignmentFilter, agencyFilter, tcpaFilter, search]);
 
   useEffect(() => {
     void loadAgents();
+    void loadFilterOptions();
     void loadStats();
-  }, [loadAgents, loadStats]);
+  }, [loadAgents, loadFilterOptions, loadStats]);
 
   useEffect(() => {
     void loadRows();
@@ -547,17 +610,37 @@ export default function ManagerFailedPaymentFixesPage() {
               </div>
             </div>
 
-            {statsLoading ? null : Object.keys(stats.byAgent).length > 0 ? (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-                {Object.entries(stats.byAgent).map(([agentId, count]) => (
-                  <div key={agentId} className="rounded-lg border bg-card p-3">
-                    <div className="text-sm font-medium truncate" title={assigneeNameById.get(agentId) ?? agentId}>
-                      {assigneeNameById.get(agentId) ?? agentId}
+            {statsLoading ? null : Object.keys(stats.byStage).length > 0 ? (
+              <div className="space-y-2">
+                <div className="text-sm font-medium text-muted-foreground">Stage Breakdown</div>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+                  {Object.entries(stats.byStage).map(([stage, count]) => (
+                    <div key={stage} className="rounded-lg border bg-card p-3">
+                      <div className="text-sm font-medium truncate" title={stage}>
+                        {stage}
+                      </div>
+                      <div className="text-2xl font-bold text-purple-600">{count}</div>
+                      <div className="text-xs text-muted-foreground">deals</div>
                     </div>
-                    <div className="text-2xl font-bold text-blue-600">{count}</div>
-                    <div className="text-xs text-muted-foreground">assigned deals</div>
-                  </div>
-                ))}
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {statsLoading ? null : Object.keys(stats.byAgent).length > 0 ? (
+              <div className="space-y-2">
+                <div className="text-sm font-medium text-muted-foreground">By Agent</div>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                  {Object.entries(stats.byAgent).map(([agentId, count]) => (
+                    <div key={agentId} className="rounded-lg border bg-card p-3">
+                      <div className="text-sm font-medium truncate" title={assigneeNameById.get(agentId) ?? agentId}>
+                        {assigneeNameById.get(agentId) ?? agentId}
+                      </div>
+                      <div className="text-2xl font-bold text-blue-600">{count}</div>
+                      <div className="text-xs text-muted-foreground">assigned deals</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : (
               <div className="rounded-lg border bg-card p-4 text-center text-sm text-muted-foreground">
@@ -590,7 +673,7 @@ export default function ManagerFailedPaymentFixesPage() {
                   allOptionLabel="All Statuses"
                 />
                 <MultiSelect
-                  options={CARRIER_OPTIONS}
+                  options={availableCarriers}
                   selected={carrierFilter}
                   onChange={(selected) => {
                     setCarrierFilter(selected);
@@ -600,6 +683,18 @@ export default function ManagerFailedPaymentFixesPage() {
                   className="w-full lg:w-[200px]"
                   showAllOption
                   allOptionLabel="All Carriers"
+                />
+                <MultiSelect
+                  options={availableGhlStages}
+                  selected={ghlStageFilter}
+                  onChange={(selected) => {
+                    setGhlStageFilter(selected);
+                    setPage(1);
+                  }}
+                  placeholder="All GHL Stages"
+                  className="w-full lg:w-[200px]"
+                  showAllOption
+                  allOptionLabel="All GHL Stages"
                 />
                 <Select
                   value={agentFilter[0] ?? "all"}

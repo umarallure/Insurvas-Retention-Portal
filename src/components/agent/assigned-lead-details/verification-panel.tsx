@@ -528,6 +528,9 @@ export function VerificationPanel({
 
           <div className="text-muted-foreground">Agent</div>
           <div className="font-semibold text-foreground text-right">{selectedPolicyView?.agentName ?? "—"}</div>
+
+          <div className="text-muted-foreground">Phone Number</div>
+          <div className="font-semibold text-foreground text-right">{dealPhone && dealPhone !== "-" ? dealPhone : "—"}</div>
         </div>
 
         <Separator />
