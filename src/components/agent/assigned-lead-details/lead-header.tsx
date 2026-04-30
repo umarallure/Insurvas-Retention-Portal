@@ -82,6 +82,11 @@ export function LeadHeader({
             {productType !== "-" ? ` • ${productType}` : ""}
             {center !== "-" ? ` • ${center}` : ""}
           </CardDescription>
+          {phone && phone !== "-" && (
+            <div className="text-sm text-muted-foreground mt-1">
+              <span className="font-medium text-foreground">Phone Number:</span> {phone}
+            </div>
+          )}
         </div>
         <div className="flex shrink-0 gap-2">
           {!hideGoToDialer && (

@@ -21,6 +21,7 @@ type FailedPaymentFixRow = {
   policy_number: string;
   assigned_agency: string | null;
   ghl_stage: string | null;
+  carrier: string | null;
 };
 
 type BulkAssignAgentOption = {
@@ -73,8 +74,8 @@ function CountAllocationRow(props: {
 }) {
   const { value, agents, disabled, onChange, onRemove, canRemove } = props;
   return (
-    <div className="grid grid-cols-12 gap-2 items-center">
-      <div className="col-span-7">
+    <div className="grid grid-cols-12 gap-3 items-center">
+      <div className="col-span-8">
         <Select
           value={value.agentId}
           onValueChange={(v) => onChange({ ...value, agentId: v })}
@@ -93,7 +94,7 @@ function CountAllocationRow(props: {
         </Select>
       </div>
 
-      <div className="col-span-4">
+      <div className="col-span-3">
         <Input
           type="number"
           inputMode="numeric"
@@ -138,8 +139,8 @@ function PercentAllocationRow(props: {
 }) {
   const { value, agents, disabled, onChange, onRemove, canRemove } = props;
   return (
-    <div className="grid grid-cols-12 gap-2 items-center">
-      <div className="col-span-7">
+    <div className="grid grid-cols-12 gap-3 items-center">
+      <div className="col-span-8">
         <Select
           value={value.agentId}
           onValueChange={(v) => onChange({ ...value, agentId: v })}
@@ -157,7 +158,7 @@ function PercentAllocationRow(props: {
           </SelectContent>
         </Select>
       </div>
-      <div className="col-span-4">
+      <div className="col-span-3">
         <div className="flex items-center gap-2">
           <Input
             type="number"
@@ -206,6 +207,7 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
   const [loadingPool, setLoadingPool] = React.useState(false);
   const [pool, setPool] = React.useState<FailedPaymentFixRow[]>([]);
   const [stageFilter, setStageFilter] = React.useState<string[]>([]);
+  const [carrierFilter, setCarrierFilter] = React.useState<string[]>([]);
   const [agencyFilter, setAgencyFilter] = React.useState<string>("all");
 
   const [mode, setMode] = React.useState<AllocationMode>("percent");
@@ -216,6 +218,7 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
 
   const [running, setRunning] = React.useState(false);
   const [skipTcpa, setSkipTcpa] = React.useState(false);
+  const [availableCarriers, setAvailableCarriers] = React.useState<string[]>([]);
   const [progress, setProgress] = React.useState<{
     done: number;
     total: number;
@@ -224,18 +227,22 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
     failed: number;
   }>({ done: 0, total: 0, assigned: 0, tcpa: 0, failed: 0 });
 
-  const loadPool = React.useCallback(async (stageFilterValue: string[], agencyFilterValue: string) => {
+  const loadPool = React.useCallback(async (stageFilterValue: string[], carrierFilterValue: string[], agencyFilterValue: string) => {
     setLoadingPool(true);
     try {
       let baseQuery = supabase
         .from("failed_payment_fixes")
-        .select("id, name, phone_number, policy_number, assigned_agency, ghl_stage", { count: "exact" })
+        .select("id, name, phone_number, policy_number, assigned_agency, ghl_stage, carrier", { count: "exact" })
         .eq("is_active", true)
         .eq("assigned", false)
         .order("created_at", { ascending: false });
 
       if (stageFilterValue.length > 0) {
         baseQuery = baseQuery.in("ghl_stage", stageFilterValue);
+      }
+
+      if (carrierFilterValue.length > 0) {
+        baseQuery = baseQuery.in("carrier", carrierFilterValue);
       }
 
       if (agencyFilterValue !== "all") {
@@ -280,8 +287,26 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
 
   React.useEffect(() => {
     if (!open) return;
-    void loadPool(stageFilter, agencyFilter);
-  }, [open, stageFilter, agencyFilter]);
+    void loadPool(stageFilter, carrierFilter, agencyFilter);
+
+    // Load available carriers for filter dropdown
+    const loadCarriers = async () => {
+      const { data } = await supabase
+        .from("failed_payment_fixes")
+        .select("carrier")
+        .eq("is_active", true)
+        .eq("assigned", false)
+        .not("carrier", "is", null);
+      const carriers = new Set<string>();
+      (data ?? []).forEach((row: { carrier: string | null }) => {
+        if (typeof row.carrier === "string" && row.carrier.trim()) {
+          carriers.add(row.carrier.trim());
+        }
+      });
+      setAvailableCarriers(Array.from(carriers).sort());
+    };
+    void loadCarriers();
+  }, [open, stageFilter, carrierFilter, agencyFilter]);
 
   const handleStageFilterChange = (selected: string[]) => {
     setStageFilter(selected);
@@ -467,7 +492,7 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[95vw] max-h-[95vh] overflow-hidden flex flex-col">
+      <DialogContent className="!w-[90vw] !max-w-none !h-[85vh] overflow-hidden flex flex-col p-6">
         <DialogHeader>
           <DialogTitle>Bulk Assign Failed Payment Fixes</DialogTitle>
         </DialogHeader>
@@ -495,11 +520,11 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
             </label>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Filter by Agency:</span>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-medium">Filter by Agency</span>
               <Select value={agencyFilter} onValueChange={handleAgencyFilterChange}>
-                <SelectTrigger className="w-[200px]">
+                <SelectTrigger>
                   <SelectValue placeholder="All Agencies" />
                 </SelectTrigger>
                 <SelectContent>
@@ -513,14 +538,27 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
               </Select>
             </div>
 
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">Filter by Stage:</span>
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-medium">Filter by Carrier</span>
+              <MultiSelect
+                options={availableCarriers}
+                selected={carrierFilter}
+                onChange={(selected) => setCarrierFilter(selected)}
+                placeholder="All Carriers"
+                className="w-full"
+                showAllOption={true}
+                allOptionLabel="All Carriers"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-medium">Filter by Stage</span>
               <MultiSelect
                 options={STAGE_OPTIONS}
                 selected={stageFilter}
                 onChange={handleStageFilterChange}
                 placeholder="All Stages"
-                className="w-full lg:w-[300px]"
+                className="w-full"
                 showAllOption={true}
                 allOptionLabel="All Stages"
               />
@@ -545,7 +583,7 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => void loadPool(stageFilter, agencyFilter)}
+              onClick={() => void loadPool(stageFilter, carrierFilter, agencyFilter)}
               disabled={loadingPool || running}
             >
               {loadingPool ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -554,14 +592,15 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
           </div>
 
           {!loadingPool && pool.length > 0 && (
-            <div className="flex-1 overflow-auto border rounded-md max-h-[300px]">
+            <div className="overflow-auto border rounded-md max-h-[45vh]">
               <table className="w-full text-sm">
                 <thead className="bg-muted/30 sticky top-0">
                   <tr>
-                    <th className="text-left px-3 py-2 font-medium">#</th>
+                    <th className="text-left px-3 py-2 font-medium w-[50px]">#</th>
                     <th className="text-left px-3 py-2 font-medium">Name</th>
                     <th className="text-left px-3 py-2 font-medium">Phone</th>
                     <th className="text-left px-3 py-2 font-medium">Policy #</th>
+                    <th className="text-left px-3 py-2 font-medium">Carrier</th>
                     <th className="text-left px-3 py-2 font-medium">Agency</th>
                     <th className="text-left px-3 py-2 font-medium">Stage</th>
                   </tr>
@@ -573,6 +612,7 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
                       <td className="px-3 py-2">{deal.name ?? "-"}</td>
                       <td className="px-3 py-2">{deal.phone_number ?? "-"}</td>
                       <td className="px-3 py-2">{deal.policy_number}</td>
+                      <td className="px-3 py-2">{deal.carrier ?? "-"}</td>
                       <td className="px-3 py-2">{deal.assigned_agency ?? "-"}</td>
                       <td className="px-3 py-2">{deal.ghl_stage ?? "-"}</td>
                     </tr>
@@ -643,7 +683,7 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
 
               if (mode === "even") {
                 return (
-                  <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                  <div key={idx} className="grid grid-cols-12 gap-3 items-center">
                     <div className="col-span-11">
                       <Select
                         value={a.agentId}

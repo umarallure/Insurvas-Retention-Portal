@@ -13,6 +13,7 @@ import { Loader2, ArrowLeftIcon, PhoneIcon } from "lucide-react";
 
 import { DailyDealFlowTab } from "@/components/agent/assigned-lead-details/daily-deal-flow-tab";
 import { ContactNotesPanel } from "@/components/agent/assigned-lead-details/contact-notes-panel";
+import { CrmLeadNotesPanel } from "@/components/agent/assigned-lead-details/crm-lead-notes-panel";
 import { VerificationPanel } from "@/components/agent/assigned-lead-details/verification-panel";
 import { PolicyCard } from "@/components/agent/assigned-lead-details/policy-card";
 import { LeadHeader } from "@/components/agent/assigned-lead-details/lead-header";
@@ -52,6 +53,7 @@ type FailedPaymentFixRow = {
   cc_value: number | null;
   call_center: string | null;
   sales_agent: string | null;
+  writing_number: string | null;
   assigned: boolean;
   is_active: boolean;
   tcpa_flag: boolean;
@@ -557,6 +559,7 @@ export default function AgentFailedPaymentFixDetailsPage() {
           call_center: deal.call_center,
           sales_agent: deal.sales_agent,
           assigned_agency: deal.assigned_agency,
+          writing_number: deal.writing_number,
         },
       },
     ];
@@ -709,7 +712,7 @@ export default function AgentFailedPaymentFixDetailsPage() {
                     <TabsContent value="contact-notes" className="pt-2">
                       <div className="space-y-4">
                         {deal?.policy_number ? (
-                          <ContactNotesPanel mondayItemId={String(deal.policy_number)} />
+                          <CrmLeadNotesPanel policyId={String(deal.policy_number)} />
                         ) : (
                           <div className="text-sm text-muted-foreground">No policy number available for contact notes.</div>
                         )}

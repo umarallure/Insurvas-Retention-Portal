@@ -64,6 +64,7 @@ export default function RetentionDailyDealFlowPage() {
   const [error, setError] = useState<string | null>(null);
   const [rawRows, setRawRows] = useState<RetentionDealFlowRow[]>([]);
   const [totalRows, setTotalRows] = useState<number | null>(null);
+  const [agentNameById, setAgentNameById] = useState<Map<string, string>>(new Map());
 
   const [agentFilter, setAgentFilter] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -219,6 +220,7 @@ export default function RetentionDailyDealFlowPage() {
 
       setRawRows(raw);
       setTotalRows(count ?? null);
+      void loadAgentNames(raw);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load retention deal flow.";
       setError(msg);
@@ -332,6 +334,36 @@ export default function RetentionDailyDealFlowPage() {
     void loadFilterOptions();
   }, [loadFilterOptions, effectiveDateFrom, effectiveDateTo]);
 
+  const loadAgentNames = useCallback(async (rows: RetentionDealFlowRow[]) => {
+    const agentIds = new Set<string>();
+    rows.forEach((r) => {
+      const id = typeof r.retention_agent === "string" ? r.retention_agent.trim() : "";
+      if (id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+        agentIds.add(id);
+      }
+    });
+    if (agentIds.size === 0) return;
+    try {
+      const response = await fetch(`/api/resolve-agent-names?ids=${encodeURIComponent(Array.from(agentIds).join(","))}`);
+      const payload = await response.json() as { names?: Record<string, string>; error?: string };
+      if (!response.ok) {
+        console.error("[retention-daily-deal-flow] resolve-agent-names error:", payload.error);
+        return;
+      }
+      const nameById = new Map<string, string>();
+      for (const [id, name] of Object.entries(payload.names ?? {})) {
+        nameById.set(id, name);
+      }
+      setAgentNameById((prev) => {
+        const updated = new Map(prev);
+        nameById.forEach((name, id) => updated.set(id, name));
+        return updated;
+      });
+    } catch (e) {
+      console.error("[retention-daily-deal-flow] loadAgentNames error:", e);
+    }
+  }, []);
+
   const handleBulkUnassign = async () => {
     if (selectedSubmissionIds.size === 0) return;
 
@@ -413,12 +445,8 @@ export default function RetentionDailyDealFlowPage() {
       "checkbox",
       "created_at",
       "insured_name",
-      "carrier",
       "retention_agent",
-      "licensed_agent_account",
       "status",
-      "monthly_premium",
-      "face_amount",
       "notes",
     ];
   }, []);
@@ -428,12 +456,8 @@ export default function RetentionDailyDealFlowPage() {
       checkbox: "40px",
       created_at: "120px",
       insured_name: "240px",
-      carrier: "120px",
       retention_agent: "160px",
-      licensed_agent_account: "160px",
       status: "130px",
-      monthly_premium: "130px",
-      face_amount: "130px",
       notes: "240px",
     }),
     [],
@@ -692,6 +716,9 @@ export default function RetentionDailyDealFlowPage() {
                                 } else {
                                   text = v.trim();
                                 }
+                              } else if (c === "retention_agent") {
+                                const agentId = typeof v === "string" ? v.trim() : "";
+                                text = agentId ? (agentNameById.get(agentId) ?? agentId) : "";
                               } else if (v == null) {
                                 text = "";
                               } else if (typeof v === "string") {
