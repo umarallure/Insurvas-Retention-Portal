@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Button } from "@/components/ui/button";
-import { getDealLabelStyle, getDealTagLabelFromGhlStage, getPolicyStatusStyle } from "@/lib/monday-deal-category-tags";
+import { getDealLabelStyle, getDealTagLabelFromGhlStage } from "@/lib/monday-deal-category-tags";
 import { formatCurrency, formatValue } from "@/lib/agent/assigned-lead-details.logic";
 import {
   NewSaleWorkflow,
@@ -82,11 +82,6 @@ export function PolicyCard({
   const stageStyle = getDealLabelStyle(stageLabel);
 
   const statusLabel = (policy.status ?? "").toString();
-  const statusStyle = getPolicyStatusStyle(statusLabel);
-  const shouldShowStatusPill =
-    statusLabel.trim().length > 0 &&
-    statusLabel.trim() !== "—" &&
-    statusLabel.trim().toLowerCase() !== (stageLabel ?? "").toString().trim().toLowerCase();
 
   const handleNewSaleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -265,20 +260,12 @@ export function PolicyCard({
           </div>
         </div>
         <div className="flex flex-col items-end gap-0.5">
-          {shouldShowStatusPill ? (
-            <div
-              className="text-[9px] rounded-md border px-1.5 py-0.5 font-medium whitespace-nowrap"
-              style={statusStyle ? { backgroundColor: statusStyle.bg, borderColor: statusStyle.border, color: statusStyle.text } : undefined}
-            >
-              {String(policy.status ?? "")}
-            </div>
-          ) : null}
-          {stageLabel && stageStyle ? (
+          {rawStage && stageStyle ? (
             <div
               className="text-[9px] rounded-full border px-1 py-0.5 font-medium whitespace-nowrap"
               style={{ backgroundColor: stageStyle.bg, borderColor: stageStyle.border, color: stageStyle.text }}
             >
-              {stageLabel}
+              {rawStage}
             </div>
           ) : null}
         </div>

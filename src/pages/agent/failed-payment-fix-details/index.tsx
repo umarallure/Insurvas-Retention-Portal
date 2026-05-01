@@ -309,6 +309,7 @@ export default function AgentFailedPaymentFixDetailsPage() {
       }
 
       const loadedDeal = json.failedPaymentFix;
+      console.log("[fpf-details] raw ghl_stage from DB:", loadedDeal.ghl_stage);
       setDeal(loadedDeal);
       setMatchedBy(json.matchedBy);
       setSelectedPolicyKey(loadedDeal.id);
