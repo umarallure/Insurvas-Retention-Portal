@@ -88,7 +88,7 @@ export default function AgentCallBackDealsPage() {
         const { data: statusMatches } = await supabase
           .from("retention_deal_flow")
           .select("submission_id")
-          .eq("status", statusFilter);
+          .ilike("status", statusFilter.trim());
         const filtered = (statusMatches ?? []).map((m) => m.submission_id).filter(Boolean);
         if (filtered.length === 0) {
           setRows([]);
@@ -162,11 +162,12 @@ export default function AgentCallBackDealsPage() {
 
         if (retentionRows) {
           for (const r of retentionRows) {
+            const status = (r.status ?? "").trim();
             retentionMap[r.submission_id] = {
-              status: r.status ?? "",
-              notes: r.notes ?? "",
+              status,
+              notes: (r.notes ?? "").trim(),
             };
-            if (r.status) uniqueStatuses.add(r.status);
+            if (status) uniqueStatuses.add(status);
           }
         }
 

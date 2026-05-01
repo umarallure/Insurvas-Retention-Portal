@@ -30,6 +30,11 @@ type FailedPaymentFixRow = {
   failure_date: string | null;
 };
 
+type RetentionDealFlowInfo = {
+  status: string;
+  notes: string;
+};
+
 const PAGE_SIZE = 25;
 
 const POLICY_STATUS_OPTIONS = [
@@ -48,6 +53,9 @@ export default function AgentFailedPaymentFixesPage() {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [retentionStatusFilter, setRetentionStatusFilter] = useState<string>("all");
+  const [retentionData, setRetentionData] = useState<Record<string, RetentionDealFlowInfo>>({});
+  const [retentionStatusOptions, setRetentionStatusOptions] = useState<string[]>([]);
   const [page, setPage] = useState(1);
 
   const [statsLoading, setStatsLoading] = useState(false);
@@ -88,6 +96,21 @@ export default function AgentFailedPaymentFixesPage() {
       const from = (page - 1) * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
 
+      let statusFilteredPolicyIds: string[] | null = null;
+      if (retentionStatusFilter !== "all") {
+        const { data: statusMatches } = await supabase
+          .from("retention_deal_flow")
+          .select("submission_id")
+          .ilike("status", retentionStatusFilter.trim());
+        const filtered = (statusMatches ?? []).map((m) => m.submission_id).filter(Boolean);
+        if (filtered.length === 0) {
+          setRows([]);
+          setTotalRows(0);
+          return;
+        }
+        statusFilteredPolicyIds = filtered;
+      }
+
       let listQuery = supabase
         .from("failed_payment_fixes")
         .select(
@@ -102,6 +125,10 @@ export default function AgentFailedPaymentFixesPage() {
         listQuery = listQuery.eq("policy_status", statusFilter);
       }
 
+      if (statusFilteredPolicyIds !== null) {
+        listQuery = listQuery.in("policy_number", statusFilteredPolicyIds);
+      }
+
       const trimmed = search.trim();
       if (trimmed) {
         const escaped = trimmed.replace(/,/g, "");
@@ -112,8 +139,35 @@ export default function AgentFailedPaymentFixesPage() {
       const { data, error, count } = await listQuery.range(from, to);
       if (error) throw error;
 
-      setRows((data ?? []) as FailedPaymentFixRow[]);
+      let deals = (data ?? []) as FailedPaymentFixRow[];
       setTotalRows(count ?? null);
+
+      const policyNumbers = deals.map((d) => d.policy_number).filter(Boolean);
+      if (policyNumbers.length > 0) {
+        const { data: retentionRows } = await supabase
+          .from("retention_deal_flow")
+          .select("submission_id, status, notes")
+          .in("submission_id", policyNumbers);
+
+        const retentionMap: Record<string, RetentionDealFlowInfo> = {};
+        const uniqueStatuses = new Set<string>();
+
+        if (retentionRows) {
+          for (const r of retentionRows) {
+            const status = (r.status ?? "").trim();
+            retentionMap[r.submission_id] = {
+              status,
+              notes: (r.notes ?? "").trim(),
+            };
+            if (status) uniqueStatuses.add(status);
+          }
+        }
+
+        setRetentionData(retentionMap);
+        setRetentionStatusOptions(Array.from(uniqueStatuses).sort());
+      }
+
+      setRows(deals);
     } catch (error) {
       console.error("[agent-failed-payment-fixes] load error", error);
       setRows([]);
@@ -121,11 +175,18 @@ export default function AgentFailedPaymentFixesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, statusFilter, search]);
+  }, [page, statusFilter, search, retentionStatusFilter]);
 
   useEffect(() => {
     void loadDeals();
   }, [loadDeals]);
+
+  useEffect(() => {
+    if (retentionStatusFilter !== "all") {
+      setPage(1);
+    }
+    void loadDeals();
+  }, [retentionStatusFilter]);
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
@@ -221,12 +282,31 @@ export default function AgentFailedPaymentFixesPage() {
                   setPage(1);
                 }}
               >
-                <SelectTrigger className="w-full sm:w-[220px]">
+                <SelectTrigger className="w-full sm:w-[180px]">
                   <SelectValue placeholder="All Statuses" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Statuses</SelectItem>
                   {POLICY_STATUS_OPTIONS.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={retentionStatusFilter}
+                onValueChange={(v) => {
+                  setRetentionStatusFilter(v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-[200px]">
+                  <SelectValue placeholder="All Retention Statuses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Retention Statuses</SelectItem>
+                  {retentionStatusOptions.map((s) => (
                     <SelectItem key={s} value={s}>
                       {s}
                     </SelectItem>
@@ -247,7 +327,7 @@ export default function AgentFailedPaymentFixesPage() {
             </div>
 
             <div className="rounded-md border overflow-x-auto">
-              <table className="w-full text-sm min-w-[900px]">
+              <table className="w-full text-sm min-w-[1100px]">
                 <thead className="bg-muted/30">
                   <tr>
                     <th className="text-left px-3 py-2 font-medium">Name</th>
@@ -256,6 +336,8 @@ export default function AgentFailedPaymentFixesPage() {
                     <th className="text-left px-3 py-2 font-medium">Carrier</th>
                     <th className="text-left px-3 py-2 font-medium">Status</th>
                     <th className="text-left px-3 py-2 font-medium">Failure Reason</th>
+                    <th className="text-left px-3 py-2 font-medium">Retention Status</th>
+                    <th className="text-left px-3 py-2 font-medium">Notes</th>
                     <th className="text-left px-3 py-2 font-medium">Assigned</th>
                     <th className="text-right px-3 py-2 font-medium">Actions</th>
                   </tr>
@@ -263,13 +345,13 @@ export default function AgentFailedPaymentFixesPage() {
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={8} className="p-6 text-center text-muted-foreground">
+                      <td colSpan={10} className="p-6 text-center text-muted-foreground">
                         <Loader2 className="h-4 w-4 animate-spin inline mr-2" /> Loading...
                       </td>
                     </tr>
                   ) : rows.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="p-6 text-center text-muted-foreground">
+                      <td colSpan={10} className="p-6 text-center text-muted-foreground">
                         No failed payment fixes assigned.
                       </td>
                     </tr>
@@ -286,6 +368,7 @@ export default function AgentFailedPaymentFixesPage() {
                             return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
                           })()
                         : "—";
+                      const retention = retentionData[row.policy_number];
                       return (
                         <tr key={row.id} className="border-t">
                           <td className="px-3 py-2 truncate max-w-[180px]">
@@ -313,6 +396,18 @@ export default function AgentFailedPaymentFixesPage() {
                           </td>
                           <td className="px-3 py-2 truncate max-w-[150px] text-xs">
                             {row.failure_reason ?? "-"}
+                          </td>
+                          <td className="px-3 py-2 truncate max-w-[120px] text-xs">
+                            {retention?.status ? (
+                              <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                                {retention.status}
+                              </span>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td className="px-3 py-2 truncate max-w-[180px] text-xs text-muted-foreground" title={retention?.notes ?? undefined}>
+                            {retention?.notes ? retention.notes.slice(0, 40) + (retention.notes.length > 40 ? "..." : "") : "—"}
                           </td>
                           <td className="px-3 py-2 truncate max-w-[100px] text-xs text-muted-foreground">
                             {assigned}
