@@ -21,6 +21,59 @@ const newSaleCarrierOptions = [
   "Transamerica",
 ];
 
+const US_STATES = [
+  { value: "Alabama", label: "Alabama" },
+  { value: "Alaska", label: "Alaska" },
+  { value: "Arizona", label: "Arizona" },
+  { value: "Arkansas", label: "Arkansas" },
+  { value: "California", label: "California" },
+  { value: "Colorado", label: "Colorado" },
+  { value: "Connecticut", label: "Connecticut" },
+  { value: "Delaware", label: "Delaware" },
+  { value: "Florida", label: "Florida" },
+  { value: "Georgia", label: "Georgia" },
+  { value: "Hawaii", label: "Hawaii" },
+  { value: "Idaho", label: "Idaho" },
+  { value: "Illinois", label: "Illinois" },
+  { value: "Indiana", label: "Indiana" },
+  { value: "Iowa", label: "Iowa" },
+  { value: "Kansas", label: "Kansas" },
+  { value: "Kentucky", label: "Kentucky" },
+  { value: "Louisiana", label: "Louisiana" },
+  { value: "Maine", label: "Maine" },
+  { value: "Maryland", label: "Maryland" },
+  { value: "Massachusetts", label: "Massachusetts" },
+  { value: "Michigan", label: "Michigan" },
+  { value: "Minnesota", label: "Minnesota" },
+  { value: "Mississippi", label: "Mississippi" },
+  { value: "Missouri", label: "Missouri" },
+  { value: "Montana", label: "Montana" },
+  { value: "Nebraska", label: "Nebraska" },
+  { value: "Nevada", label: "Nevada" },
+  { value: "New Hampshire", label: "New Hampshire" },
+  { value: "New Jersey", label: "New Jersey" },
+  { value: "New Mexico", label: "New Mexico" },
+  { value: "New York", label: "New York" },
+  { value: "North Carolina", label: "North Carolina" },
+  { value: "North Dakota", label: "North Dakota" },
+  { value: "Ohio", label: "Ohio" },
+  { value: "Oklahoma", label: "Oklahoma" },
+  { value: "Oregon", label: "Oregon" },
+  { value: "Pennsylvania", label: "Pennsylvania" },
+  { value: "Rhode Island", label: "Rhode Island" },
+  { value: "South Carolina", label: "South Carolina" },
+  { value: "South Dakota", label: "South Dakota" },
+  { value: "Tennessee", label: "Tennessee" },
+  { value: "Texas", label: "Texas" },
+  { value: "Utah", label: "Utah" },
+  { value: "Vermont", label: "Vermont" },
+  { value: "Virginia", label: "Virginia" },
+  { value: "Washington", label: "Washington" },
+  { value: "West Virginia", label: "West Virginia" },
+  { value: "Wisconsin", label: "Wisconsin" },
+  { value: "Wyoming", label: "Wyoming" },
+];
+
 export type NewSaleQuoteDetails = {
   carrier: string;
   product: string;
@@ -28,6 +81,7 @@ export type NewSaleQuoteDetails = {
   monthlyPremium: string;
   draftDate: string;
   notes: string;
+  state: string;
 };
 
 type NewSaleWorkflowProps = {
@@ -74,6 +128,7 @@ export function NewSaleWorkflow({
   const [quotePremium, setQuotePremium] = React.useState("");
   const [quoteNotes, setQuoteNotes] = React.useState("");
   const [draftDate, setDraftDate] = React.useState("");
+  const [quoteState, setQuoteState] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
 
   const handleSubmit = async () => {
@@ -121,7 +176,7 @@ export function NewSaleWorkflow({
         }
       }
 
-      // Call the Edge Function
+      // Call the Edge Function for new sale
       const edgeFunctionUrl = "https://agnefzuxoimnmfarqaxz.supabase.co/functions/v1/retnetion-new-sale-connector";
 
       const leadDataWithCustomerName = {
@@ -154,26 +209,45 @@ export function NewSaleWorkflow({
       } catch (fetchError) {
         // Network-level error (Failed to fetch) - function may have succeeded
         console.warn("[NewSaleWorkflow] Network error, function may have completed:", fetchError);
-        toast({
-          title: "Submitted",
-          description: "The licensed agent handoff has been sent.",
-          variant: "success",
-        });
-        onCancel();
-        return;
+        functionMayHaveSucceeded = true;
       }
 
-      const result = (await response.json().catch(() => null)) as
-        | { ok: true; leadId?: string; submissionId?: string }
-        | { ok: false; error: string }
-        | null;
+      // If we got a response, check if it succeeded
+      if (response) {
+        const result = (await response.json().catch(() => null)) as
+          | { ok: true; leadId?: string; submissionId?: string }
+          | { ok: false; error: string }
+          | null;
 
-      if (!response.ok) {
-        throw new Error(`Submit failed (${response.status})`);
+        if (!response.ok) {
+          throw new Error(`Submit failed (${response.status})`);
+        }
+
+        if (!result || ("ok" in result && result.ok === false)) {
+          throw new Error(result && "error" in result ? result.error : "Unknown error");
+        }
       }
 
-      if (!result || ("ok" in result && result.ok === false)) {
-        throw new Error(result && "error" in result ? result.error : "Unknown error");
+      // Call notify-eligible-agents if we have carrier and state
+      if (quoteCarrier && quoteState) {
+        try {
+          const notifyUrl = "https://agnefzuxoimnmfarqaxz.supabase.co/functions/v1/notify-eligible-agents";
+          await fetch(notifyUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({
+              carrier: quoteCarrier,
+              state: quoteState,
+              lead_vendor: "Retention BPO",
+            }),
+          });
+        } catch (notifyError) {
+          console.warn("[NewSaleWorkflow] notify-eligible-agents error:", notifyError);
+          // Don't fail the whole submission if notify fails
+        }
       }
 
       toast({
@@ -230,6 +304,21 @@ export function NewSaleWorkflow({
           </Select>
         </div>
         <div className="space-y-2">
+          <Label>State</Label>
+          <Select value={quoteState} onValueChange={setQuoteState}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select State" />
+            </SelectTrigger>
+            <SelectContent>
+              {US_STATES.map((s) => (
+                <SelectItem key={s.value} value={s.value}>
+                  {s.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
           <Label>Coverage Amount</Label>
           <Input value={quoteCoverage} onChange={(e) => setQuoteCoverage(e.target.value)} />
         </div>
@@ -252,7 +341,7 @@ export function NewSaleWorkflow({
           Cancel
         </Button>
         <Button onClick={() => void handleSubmit()} className="flex-1" disabled={submitting}>
-          Submit
+          {submitting ? "Submitting..." : "Submit"}
         </Button>
       </div>
     </div>
