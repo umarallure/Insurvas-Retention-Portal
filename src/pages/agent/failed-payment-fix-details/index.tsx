@@ -17,6 +17,7 @@ import { CrmLeadNotesPanel } from "@/components/agent/assigned-lead-details/crm-
 import { VerificationPanel } from "@/components/agent/assigned-lead-details/verification-panel";
 import { PolicyCard } from "@/components/agent/assigned-lead-details/policy-card";
 import { LeadHeader } from "@/components/agent/assigned-lead-details/lead-header";
+import { NewSaleConfirmDialog } from "@/components/agent/assigned-lead-details/new-sale-confirm-dialog";
 import { useRetentionAgent } from "@/components/agent/assigned-lead-details/use-retention-agent";
 import {
   normalizePhoneDigits,
@@ -478,10 +479,13 @@ export default function AgentFailedPaymentFixDetailsPage() {
   }, [pendingNewSalePolicyKey]);
 
   const handleNewSaleConfirm = React.useCallback(() => {
+    const key = pendingNewSalePolicyKey;
     setNewSaleConfirmOpen(false);
-    setSelectedPolicyKey(null);
-    void loadEverything();
-  }, [loadEverything]);
+    setPendingNewSalePolicyKey(null);
+    if (!key) return;
+    setExpandedWorkflowKey(key);
+    setActiveWorkflowType("new_sale");
+  }, [pendingNewSalePolicyKey]);
 
   const handleSaveDisposition = async () => {
     if (!selectedDisposition || !deal) return;
@@ -603,6 +607,21 @@ export default function AgentFailedPaymentFixDetailsPage() {
 
   return (
     <div className="w-full px-6 py-8 min-h-screen bg-muted/20">
+      <NewSaleConfirmDialog
+        open={newSaleConfirmOpen}
+        onOpenChange={(open) => {
+          setNewSaleConfirmOpen(open);
+          if (!open) setPendingNewSalePolicyKey(null);
+        }}
+        onConfirm={() => {
+          const key = pendingNewSalePolicyKey;
+          setNewSaleConfirmOpen(false);
+          setPendingNewSalePolicyKey(null);
+          if (!key) return;
+          setExpandedWorkflowKey(key);
+          setActiveWorkflowType("new_sale");
+        }}
+      />
       <div className="w-full space-y-3">
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => router.push("/agent/failed-payment-fixes")}>

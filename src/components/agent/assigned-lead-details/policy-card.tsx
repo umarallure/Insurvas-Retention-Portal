@@ -371,6 +371,8 @@ export function PolicyCard({
                   customerName={policy.clientName}
                   submissionId={typeof lead?.submission_id === "string" ? lead.submission_id : null}
                   callBackDealId={callBackDealId ?? null}
+                  verificationItems={verificationItems}
+                  verificationInputValues={verificationInputValues}
                   onCancel={onCancelWorkflow}
                   onAfterSubmit={onNewSaleAfterSubmit}
                 />
