@@ -122,11 +122,38 @@ export function NewSaleWorkflow({
   const [quoteState, setQuoteState] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [carriers, setCarriers] = React.useState<Array<{ id: number; name: string }>>([]);
+  const [carriersError, setCarriersError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     const loadCarriers = async () => {
-      const { data } = await supabase.from("carriers").select("id, name").order("name");
-      if (data) setCarriers(data);
+      try {
+        const { data, error } = await supabase.from("carriers").select("id, name").order("name");
+        if (error) throw error;
+        if (data && data.length > 0) {
+          setCarriers(data);
+        } else {
+          // Fallback to hardcoded list if table is empty
+          setCarriers([
+            { id: 12, name: "AMAM" },
+            { id: 13, name: "American Home Life" },
+            { id: 14, name: "Aetna" },
+            { id: 15, name: "Aflac" },
+            { id: 18, name: "MOH" },
+            { id: 26, name: "Sentinel Security Life" },
+          ]);
+        }
+      } catch (err) {
+        console.warn("[NewSaleWorkflow] failed to load carriers, using fallback:", err);
+        // Fallback to hardcoded list
+        setCarriers([
+          { id: 12, name: "AMAM" },
+          { id: 13, name: "American Home Life" },
+          { id: 14, name: "Aetna" },
+          { id: 15, name: "Aflac" },
+          { id: 18, name: "MOH" },
+          { id: 26, name: "Sentinel Security Life" },
+        ]);
+      }
     };
     void loadCarriers();
   }, []);
