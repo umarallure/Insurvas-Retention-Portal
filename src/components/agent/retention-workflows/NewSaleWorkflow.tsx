@@ -211,7 +211,7 @@ export function NewSaleWorkflow({
         customer_full_name: customerName,
       };
 
-      let response: Response;
+      let response: Response | null = null;
       try {
         response = await fetch(edgeFunctionUrl, {
           method: "POST",
