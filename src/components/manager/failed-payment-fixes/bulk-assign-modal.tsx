@@ -793,8 +793,7 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
 
           {running || progress.total > 0 ? (
             <div className="text-xs text-muted-foreground">
-              Progress {progress.done}/{progress.total} • Assigned {progress.assigned} • TCPA {progress.tcpa} • Failed{" "}
-              {progress.failed}
+              Progress {progress.done}/{progress.total} • Assigned {progress.assigned} • TCPA {progress.tcpa} • DQ {progress.dq} • Failed {progress.failed}
             </div>
           ) : null}
         </div>
