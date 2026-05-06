@@ -204,7 +204,7 @@ export function NewSaleWorkflow({
       }
 
       // Call the Edge Function for new sale
-      const edgeFunctionUrl = "https://gqhcjqxcvhgwsqfqgekh.supabase.co/functions/v1/retnetion-new-sale-connector";
+      const edgeFunctionUrl = "https://agnefzuxoimnmfarqaxz.supabase.co/functions/v1/retnetion-new-sale-connector";
 
       const leadDataWithCustomerName = {
         ...leadData,
