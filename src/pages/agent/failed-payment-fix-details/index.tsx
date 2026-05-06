@@ -154,6 +154,9 @@ export default function AgentFailedPaymentFixDetailsPage() {
   const [dispositionNotes, setDispositionNotes] = React.useState("");
   const [savingDisposition, setSavingDisposition] = React.useState(false);
 
+  const [isDualChargeback, setIsDualChargeback] = React.useState(false);
+  const [dualChargebackCount, setDualChargebackCount] = React.useState(0);
+
   const handleToggleDealFlowRow = React.useCallback((rowId: string) => {
     setExpandedDealFlowRows((prev) => {
       const next = new Set(prev);
@@ -314,6 +317,26 @@ export default function AgentFailedPaymentFixDetailsPage() {
       setDeal(loadedDeal);
       setMatchedBy(json.matchedBy);
       setSelectedPolicyKey(loadedDeal.id);
+
+      // Check for dual chargeback - look for same name with multiple Chargeback entries
+      if (loadedDeal.name) {
+        try {
+          const { data: dualCheckData } = await supabase
+            .from("failed_payment_fixes")
+            .select("id, ghl_stage, ghl_name")
+            .ilike("name", loadedDeal.name);
+
+          if (dualCheckData) {
+            const chargebackCount = dualCheckData.filter(
+              (row) => row.ghl_stage && row.ghl_stage.toLowerCase().includes("chargeback")
+            ).length;
+            setDualChargebackCount(chargebackCount);
+            setIsDualChargeback(chargebackCount > 1);
+          }
+        } catch (dualErr) {
+          console.warn("[fpf-details] dual chargeback check failed:", dualErr);
+        }
+      }
 
       if (json.verificationItems && json.verificationItems.length > 0) {
         const fieldsOrder = getVerificationFieldList();
@@ -622,6 +645,24 @@ export default function AgentFailedPaymentFixDetailsPage() {
           setActiveWorkflowType("new_sale");
         }}
       />
+      {isDualChargeback && (
+        <div className="bg-red-600 text-white px-4 py-3 rounded-md flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold">⚠️ DQ Alert:</span>
+            <span>This lead has {dualChargebackCount} Chargeback entries in the system. Lead is flagged as DQ.</span>
+          </div>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => {
+              setDispositionModalOpen(true);
+              setSelectedDisposition("dq");
+            }}
+          >
+            Mark as DQ
+          </Button>
+        </div>
+      )}
       <div className="w-full space-y-3">
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => router.push("/agent/failed-payment-fixes")}>
@@ -714,6 +755,7 @@ export default function AgentFailedPaymentFixDetailsPage() {
                                 personalDob="-"
                                 personalAddress1="-"
                                 onCancelWorkflow={handleCancelWorkflow}
+                                isDq={isDualChargeback}
                               />
                             ))}
                           </div>
