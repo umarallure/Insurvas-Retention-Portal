@@ -49,6 +49,7 @@ type PolicyCardProps = {
   onCancelWorkflow: () => void;
   onNewSaleAfterSubmit?: (quote: NewSaleQuoteDetails) => Promise<void> | void;
   callBackDealId?: string | null;
+  isDq?: boolean;
 };
 
 export function PolicyCard({
@@ -73,6 +74,7 @@ export function PolicyCard({
   onCancelWorkflow,
   onNewSaleAfterSubmit,
   callBackDealId,
+  isDq,
 }: PolicyCardProps) {
   const rawStage =
     policy.raw && typeof (policy.raw as { ghl_stage?: unknown }).ghl_stage === "string"
@@ -85,6 +87,9 @@ export function PolicyCard({
 
   const handleNewSaleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (isDq) {
+      return; // Block New Sale for DQ leads
+    }
     if (expandedWorkflowKey === policy.key && activeWorkflowType === "new_sale") {
       onCancelWorkflow();
     } else {
@@ -333,9 +338,10 @@ export function PolicyCard({
               variant="outline"
               size="sm"
               onClick={handleNewSaleClick}
-              className={expandedWorkflowKey === policy.key && activeWorkflowType === "new_sale" ? "border-primary bg-primary/10" : ""}
+              disabled={isDq}
+              className={expandedWorkflowKey === policy.key && activeWorkflowType === "new_sale" ? "border-primary bg-primary/10" : "" + (isDq ? " opacity-50 cursor-not-allowed" : "")}
             >
-              New Sale
+              New Sale {isDq ? "(DQ)" : ""}
             </Button>
             <Button
               type="button"
