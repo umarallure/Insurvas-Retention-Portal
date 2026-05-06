@@ -243,7 +243,6 @@ export function FailedPaymentFixBulkUnassignModal(props: BulkUnassignModalProps)
             assigned_to_profile_id: null,
             assigned_by_profile_id: null,
             assigned_at: null,
-            is_active: false,
           })
           .in("id", batch);
 
