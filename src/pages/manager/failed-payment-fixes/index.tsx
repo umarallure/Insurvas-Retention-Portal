@@ -80,6 +80,12 @@ const ASSIGNMENT_OPTIONS = [
   { value: "unassigned", label: "Unassigned" },
 ];
 
+const ACTIVE_STATUS_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "active", label: "Active" },
+  { value: "inactive", label: "Inactive" },
+];
+
 export default function ManagerFailedPaymentFixesPage() {
   const { toast } = useToast();
   const toastRef = React.useRef(toast);
@@ -100,6 +106,7 @@ export default function ManagerFailedPaymentFixesPage() {
   const [assignmentFilter, setAssignmentFilter] = useState<string>("all");
   const [agencyFilter, setAgencyFilter] = useState<string[]>([]);
   const [tcpaFilter, setTcpaFilter] = useState<string>("all");
+  const [activeFilter, setActiveFilter] = useState<string>("active");
 
   const [agents, setAgents] = useState<ProfileRow[]>([]);
   const [assigneeNameById, setAssigneeNameById] = useState<Map<string, string>>(new Map());
@@ -210,7 +217,8 @@ export default function ManagerFailedPaymentFixesPage() {
 
       const buildBaseQuery = () => {
         let q = supabase.from("failed_payment_fixes").select("*", { count: "exact", head: true });
-        q = q.eq("is_active", true);
+        if (activeFilter === "active") q = q.eq("is_active", true);
+        else if (activeFilter === "inactive") q = q.eq("is_active", false);
         if (statusFilter.length > 0) q = q.in("policy_status", statusFilter);
         if (carrierFilter.length > 0) q = q.in("carrier", carrierFilter);
         if (ghlStageFilter.length > 0) q = q.in("ghl_stage", ghlStageFilter);
@@ -342,7 +350,7 @@ export default function ManagerFailedPaymentFixesPage() {
     } finally {
       setStatsLoading(false);
     }
-  }, [statusFilter, carrierFilter, ghlStageFilter, search, agentFilter, assignmentFilter, agencyFilter, tcpaFilter]);
+  }, [statusFilter, carrierFilter, ghlStageFilter, search, agentFilter, assignmentFilter, agencyFilter, tcpaFilter, activeFilter]);
 
   const loadRows = useCallback(async () => {
     setLoading(true);
@@ -355,8 +363,10 @@ export default function ManagerFailedPaymentFixesPage() {
           "id, name, phone_number, email, policy_number, carrier, policy_type, policy_status, carrier_status, ghl_name, ghl_stage, assigned_agency, deal_value, cc_value, call_center, sales_agent, assigned, is_active, tcpa_flag, tcpa_message, assigned_to_profile_id, assigned_at, last_synced_at, failure_reason, failure_date",
           { count: "exact" },
         )
-        .eq("is_active", true)
         .order("created_at", { ascending: false, nullsFirst: false });
+
+      if (activeFilter === "active") query = query.eq("is_active", true);
+      else if (activeFilter === "inactive") query = query.eq("is_active", false);
 
       if (statusFilter.length > 0) {
         query = query.in("policy_status", statusFilter);
@@ -436,7 +446,7 @@ export default function ManagerFailedPaymentFixesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, statusFilter, carrierFilter, ghlStageFilter, agentFilter, assignmentFilter, agencyFilter, tcpaFilter, search]);
+  }, [page, statusFilter, carrierFilter, ghlStageFilter, agentFilter, assignmentFilter, agencyFilter, tcpaFilter, search, activeFilter]);
 
   useEffect(() => {
     void loadAgents();
@@ -770,6 +780,24 @@ export default function ManagerFailedPaymentFixesPage() {
                     ))}
                   </SelectContent>
                 </Select>
+                <Select
+                  value={activeFilter}
+                  onValueChange={(v) => {
+                    setActiveFilter(v);
+                    setPage(1);
+                  }}
+                >
+                  <SelectTrigger className="w-full lg:w-[140px]">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ACTIVE_STATUS_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <Button
@@ -1007,9 +1035,6 @@ export default function ManagerFailedPaymentFixesPage() {
             {activeUnassign ? (
               <>
                 Remove assignment for <span className="font-medium text-foreground">{activeUnassign.name ?? "this deal"}</span>?
-                <div className="mt-2 text-xs text-amber-600">
-                  This will mark the deal as inactive.
-                </div>
               </>
             ) : (
               "No deal selected."
