@@ -12,15 +12,6 @@ import { Textarea } from "@/components/ui/textarea";
 
 import { productTypeOptions } from "./types";
 
-const newSaleCarrierOptions = [
-  "AMAM",
-  "Aetna",
-  "Aflac",
-  "American Home Life",
-  "Mutual of Omaha",
-  "Transamerica",
-];
-
 const US_STATES = [
   { value: "Alabama", label: "Alabama" },
   { value: "Alaska", label: "Alaska" },
@@ -130,6 +121,15 @@ export function NewSaleWorkflow({
   const [draftDate, setDraftDate] = React.useState("");
   const [quoteState, setQuoteState] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
+  const [carriers, setCarriers] = React.useState<Array<{ id: number; name: string }>>([]);
+
+  React.useEffect(() => {
+    const loadCarriers = async () => {
+      const { data } = await supabase.from("carriers").select("id, name").order("name");
+      if (data) setCarriers(data);
+    };
+    void loadCarriers();
+  }, []);
 
   const handleSubmit = async () => {
     setSubmitting(true);
@@ -280,9 +280,9 @@ export function NewSaleWorkflow({
               <SelectValue placeholder="Select Carrier" />
             </SelectTrigger>
             <SelectContent>
-              {newSaleCarrierOptions.map((c) => (
-                <SelectItem key={c} value={c}>
-                  {c}
+              {carriers.map((c) => (
+                <SelectItem key={c.id} value={c.name}>
+                  {c.name}
                 </SelectItem>
               ))}
             </SelectContent>
