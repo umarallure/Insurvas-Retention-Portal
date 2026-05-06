@@ -22,6 +22,12 @@ type FailedPaymentFixRow = {
   assigned_agency: string | null;
   ghl_stage: string | null;
   carrier: string | null;
+  isDq?: boolean;
+};
+
+type DualChargebackInfo = {
+  name: string;
+  chargebackCount: number;
 };
 
 type BulkAssignAgentOption = {
@@ -225,7 +231,9 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
     assigned: number;
     tcpa: number;
     failed: number;
-  }>({ done: 0, total: 0, assigned: 0, tcpa: 0, failed: 0 });
+    dq: number;
+  }>({ done: 0, total: 0, assigned: 0, tcpa: 0, failed: 0, dq: 0 });
+  const [dualChargebackNames, setDualChargebackNames] = React.useState<Set<string>>(new Set());
 
   const loadPool = React.useCallback(async (stageFilterValue: string[], carrierFilterValue: string[], agencyFilterValue: string) => {
     setLoadingPool(true);
@@ -272,6 +280,20 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
       }
 
       setPool(allData);
+
+      // Check for dual chargeback leads
+      const nameChargebackCounts = new Map<string, number>();
+      for (const deal of allData) {
+        if (deal.name && deal.ghl_stage && deal.ghl_stage.toLowerCase().includes("chargeback")) {
+          const nameKey = deal.name.trim().toLowerCase();
+          nameChargebackCounts.set(nameKey, (nameChargebackCounts.get(nameKey) ?? 0) + 1);
+        }
+      }
+      const dualNames = new Set<string>();
+      for (const [name, count] of nameChargebackCounts) {
+        if (count > 1) dualNames.add(name);
+      }
+      setDualChargebackNames(dualNames);
     } catch (error) {
       console.error("[failed-payment-fix-bulk-assign] pool error", error);
       toastRef.current({
@@ -449,27 +471,33 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
     let tcpa = 0;
     let failed = 0;
     let done = 0;
+    let dq = 0;
 
     const CONCURRENCY = 25;
 
     for (let i = 0; i < plan.length; i += CONCURRENCY) {
       const batch = plan.slice(i, i + CONCURRENCY);
       const results = await Promise.allSettled(
-        batch.map(({ deal, assigneeProfileId }) =>
-          assignFailedPaymentFix({
+        batch.map(async ({ deal, assigneeProfileId }) => {
+          // Skip DQ leads (dual chargeback)
+          if (deal.name && dualChargebackNames.has(deal.name.trim().toLowerCase())) {
+            return { action: "dq_skipped" as const };
+          }
+          return assignFailedPaymentFix({
             failedPaymentFixId: deal.id,
             assigneeProfileId,
             assignedByProfileId: managerProfileId,
             phoneNumber: deal.phone_number,
             skipTcpa,
-          }),
-        ),
+          });
+        }),
       );
 
       for (const r of results) {
         if (r.status === "fulfilled") {
           if (r.value.action === "assigned") assigned += 1;
           else if (r.value.action === "tcpa_blocked") tcpa += 1;
+          else if (r.value.action === "dq_skipped") dq += 1;
           else failed += 1;
         } else {
           console.error("[failed-payment-fix-bulk-assign] item error", r.reason);
@@ -478,12 +506,12 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
       }
 
       done += batch.length;
-      setProgress({ done, total: plan.length, assigned, tcpa, failed });
+      setProgress({ done, total: plan.length, assigned, tcpa, failed, dq });
     }
 
     toastRef.current({
       title: "Bulk assign complete",
-      description: `Assigned ${assigned} • TCPA blocked ${tcpa} • Failed ${failed}`,
+      description: `Assigned ${assigned} • TCPA blocked ${tcpa} • DQ skipped ${dq} • Failed ${failed}`,
     });
 
     setRunning(false);
@@ -496,6 +524,15 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
         <DialogHeader>
           <DialogTitle>Bulk Assign Failed Payment Fixes</DialogTitle>
         </DialogHeader>
+
+        {dualChargebackNames.size > 0 && (
+          <div className="bg-red-100 border border-red-300 text-red-700 px-4 py-3 rounded-md">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold">⚠️ DQ Warning:</span>
+              <span>{dualChargebackNames.size} lead(s) have multiple Chargeback entries and will be skipped during assignment.</span>
+            </div>
+          </div>
+        )}
 
         <div className="flex-1 overflow-auto space-y-4 py-2">
           <div className="text-sm text-muted-foreground">
@@ -603,20 +640,25 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
                     <th className="text-left px-3 py-2 font-medium">Carrier</th>
                     <th className="text-left px-3 py-2 font-medium">Agency</th>
                     <th className="text-left px-3 py-2 font-medium">Stage</th>
+                    <th className="text-left px-3 py-2 font-medium w-[60px]">DQ</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {pool.slice(0, 10).map((deal, idx) => (
-                    <tr key={deal.id} className="border-t">
+                  {pool.slice(0, 10).map((deal, idx) => {
+                    const isDq = deal.name ? dualChargebackNames.has(deal.name.trim().toLowerCase()) : false;
+                    return (
+                    <tr key={deal.id} className={`border-t ${isDq ? "bg-red-100" : ""}`}>
                       <td className="px-3 py-2 text-muted-foreground">{idx + 1}</td>
-                      <td className="px-3 py-2">{deal.name ?? "-"}</td>
+                      <td className={`px-3 py-2 ${isDq ? "text-red-600 font-semibold" : ""}`}>{deal.name ?? "-"}</td>
                       <td className="px-3 py-2">{deal.phone_number ?? "-"}</td>
                       <td className="px-3 py-2">{deal.policy_number}</td>
                       <td className="px-3 py-2">{deal.carrier ?? "-"}</td>
                       <td className="px-3 py-2">{deal.assigned_agency ?? "-"}</td>
                       <td className="px-3 py-2">{deal.ghl_stage ?? "-"}</td>
+                      <td className="px-3 py-2">{isDq ? "⚠️ DQ" : "-"}</td>
                     </tr>
-                  ))}
+                  );
+                  })}
                 </tbody>
               </table>
             </div>
