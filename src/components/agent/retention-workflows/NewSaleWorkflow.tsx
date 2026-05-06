@@ -204,7 +204,7 @@ export function NewSaleWorkflow({
       }
 
       // Call the Edge Function for new sale
-      const edgeFunctionUrl = "https://agnefzuxoimnmfarqaxz.supabase.co/functions/v1/retnetion-new-sale-connector";
+      const edgeFunctionUrl = "https://gqhcjqxcvhgwsqfqgekh.supabase.co/functions/v1/retnetion-new-sale-connector";
 
       const leadDataWithCustomerName = {
         ...leadData,
@@ -258,7 +258,7 @@ export function NewSaleWorkflow({
       // Call notify-eligible-agents if we have carrier and state
       if (quoteCarrier && quoteState) {
         try {
-          const notifyUrl = "https://agnefzuxoimnmfarqaxz.supabase.co/functions/v1/notify-eligible-agents";
+          const notifyUrl = "https://gqhcjqxcvhgwsqfqgekh.supabase.co/functions/v1/notify-eligible-agents";
           await fetch(notifyUrl, {
             method: "POST",
             headers: {
