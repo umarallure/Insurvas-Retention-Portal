@@ -70,6 +70,14 @@ const AGENCY_OPTIONS = [
   "Unlimited Insurance",
 ];
 
+function chunkify<T>(arr: T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    result.push(arr.slice(i, i + size));
+  }
+  return result;
+}
+
 function CountAllocationRow(props: {
   value: AllocationRowState;
   agents: BulkAssignAgentOption[];
@@ -505,13 +513,25 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
         }
       }
 
+      // Deactivate DQ leads after the batch
+      const dqBatchDeals = batch.filter(b => b.deal.name && dualChargebackNames.has(b.deal.name.trim().toLowerCase()));
+      if (dqBatchDeals.length > 0) {
+        const dqIds = dqBatchDeals.map(b => b.deal.id);
+        for (const chunk of chunkify(dqIds, 200)) {
+          await supabase
+            .from("failed_payment_fixes")
+            .update({ is_active: false })
+            .in("id", chunk);
+        }
+      }
+
       done += batch.length;
       setProgress({ done, total: plan.length, assigned, tcpa, failed, dq });
     }
 
     toastRef.current({
       title: "Bulk assign complete",
-      description: `Assigned ${assigned} • TCPA blocked ${tcpa} • DQ skipped ${dq} • Failed ${failed}`,
+      description: `Assigned ${assigned} • TCPA blocked ${tcpa} • DQ deactivated ${dq} • Failed ${failed}`,
     });
 
     setRunning(false);
@@ -529,7 +549,7 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
           <div className="bg-red-100 border border-red-300 text-red-700 px-4 py-3 rounded-md">
             <div className="flex items-center gap-2">
               <span className="font-semibold">⚠️ DQ Warning:</span>
-              <span>{dualChargebackNames.size} lead(s) have multiple Chargeback entries and will be skipped during assignment.</span>
+              <span>{dualChargebackNames.size} lead(s) have multiple Chargeback entries. They will be skipped and <strong>marked inactive</strong> during assignment.</span>
             </div>
           </div>
         )}
@@ -793,7 +813,7 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
 
           {running || progress.total > 0 ? (
             <div className="text-xs text-muted-foreground">
-              Progress {progress.done}/{progress.total} • Assigned {progress.assigned} • TCPA {progress.tcpa} • DQ {progress.dq} • Failed {progress.failed}
+              Progress {progress.done}/{progress.total} • Assigned {progress.assigned} • TCPA {progress.tcpa} • DQ deactivated {progress.dq} • Failed {progress.failed}
             </div>
           ) : null}
         </div>
