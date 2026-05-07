@@ -968,7 +968,7 @@ export default function ManagerFailedPaymentFixesPage() {
                         name: r.name,
                         phone_number: r.phone_number,
                         policy_number: r.policy_number,
-                        chargebackCount: nameChargebackCounts.get(r.name.trim().toLowerCase()) ?? 1,
+                        chargebackCount: nameChargebackCounts.get(r.name!.trim().toLowerCase()) ?? 1,
                       }));
 
                     dqLeads.sort((a, b) => a.name?.localeCompare(b.name ?? "") ?? 0);
