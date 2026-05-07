@@ -5,12 +5,19 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
-import { FilterIcon, Loader2, RefreshCwIcon, ShieldAlertIcon } from "lucide-react";
+import { FilterIcon, Loader2, RefreshCwIcon, ShieldAlertIcon, ChevronDownIcon } from "lucide-react";
 
 import { assignFailedPaymentFix, unassignFailedPaymentFix } from "@/lib/failed-payment-fixes/assign";
 import { FailedPaymentFixBulkAssignModal } from "@/components/manager/failed-payment-fixes/bulk-assign-modal";
@@ -86,6 +93,14 @@ const ACTIVE_STATUS_OPTIONS = [
   { value: "inactive", label: "Inactive" },
 ];
 
+function chunk<T>(arr: T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    result.push(arr.slice(i, i + size));
+  }
+  return result;
+}
+
 export default function ManagerFailedPaymentFixesPage() {
   const { toast } = useToast();
   const toastRef = React.useRef(toast);
@@ -107,6 +122,9 @@ export default function ManagerFailedPaymentFixesPage() {
   const [agencyFilter, setAgencyFilter] = useState<string[]>([]);
   const [tcpaFilter, setTcpaFilter] = useState<string>("all");
   const [activeFilter, setActiveFilter] = useState<string>("active");
+  const [bulkSelectOpen, setBulkSelectOpen] = useState(false);
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkActivating, setBulkActivating] = useState(false);
 
   const [agents, setAgents] = useState<ProfileRow[]>([]);
   const [assigneeNameById, setAssigneeNameById] = useState<Map<string, string>>(new Map());
@@ -133,6 +151,69 @@ export default function ManagerFailedPaymentFixesPage() {
 
   const [bulkAssignOpen, setBulkAssignOpen] = useState(false);
   const [bulkUnassignOpen, setBulkUnassignOpen] = useState(false);
+  const [selectAllLoading, setSelectAllLoading] = useState(false);
+  const [selectAllChecked, setSelectAllChecked] = useState(false);
+  const [deactivateDqDialogOpen, setDeactivateDqDialogOpen] = useState(false);
+  const [deactivateDqLeads, setDeactivateDqLeads] = useState<Array<{ id: string; name: string | null; phone_number: string | null; policy_number: string; chargebackCount: number }>>([]);
+  const [deactivateDqChecked, setDeactivateDqChecked] = useState<Set<string>>(new Set());
+  const [deactivateDqScanning, setDeactivateDqScanning] = useState(false);
+
+  const selectAllOnPage = useCallback(() => {
+    const ids = rows.filter(r => !r.is_active).map(r => r.id);
+    setBulkSelectedIds(new Set(ids));
+    setSelectAllChecked(true);
+  }, [rows]);
+
+  const selectAllOnAllPages = useCallback(async () => {
+    setSelectAllLoading(true);
+    setSelectAllChecked(false);
+    try {
+      let query = supabase
+        .from("failed_payment_fixes")
+        .select("id", { count: "exact" })
+        .eq("is_active", false);
+
+      const trimmed = search.trim();
+      if (trimmed) {
+        const escaped = trimmed.replace(/,/g, "");
+        query = query.or(
+          `name.ilike.%${escaped}%,phone_number.ilike.%${escaped}%,policy_number.ilike.%${escaped}%`,
+        );
+      }
+      if (statusFilter.length > 0) query = query.in("policy_status", statusFilter);
+      if (carrierFilter.length > 0) query = query.in("carrier", carrierFilter);
+      if (ghlStageFilter.length > 0) query = query.in("ghl_stage", ghlStageFilter);
+      if (tcpaFilter === "flagged") query = query.eq("tcpa_flag", true);
+      else if (tcpaFilter === "clear") query = query.eq("tcpa_flag", false);
+
+      const allIds: string[] = [];
+      let page = 0;
+      const pageSize = 1000;
+      while (true) {
+        const from = page * pageSize;
+        const { data, error, count } = await query.range(from, from + pageSize - 1);
+        if (error) throw error;
+        const rows = (data ?? []) as { id: string }[];
+        allIds.push(...rows.map(r => r.id));
+        if (rows.length < pageSize || (count !== null && allIds.length >= count)) break;
+        page++;
+      }
+      setBulkSelectedIds(new Set(allIds));
+    } catch (err) {
+      toastRef.current({ title: "Error", description: "Failed to select all leads", variant: "destructive" });
+    } finally {
+      setSelectAllLoading(false);
+    }
+  }, [search, statusFilter, carrierFilter, ghlStageFilter, tcpaFilter]);
+
+  const handleSelectAllToggle = (checked: boolean) => {
+    if (checked) {
+      selectAllOnPage();
+    } else {
+      setBulkSelectedIds(new Set());
+      setSelectAllChecked(false);
+    }
+  };
 
   const pageCount = useMemo(() => {
     if (!totalRows) return 1;
@@ -658,180 +739,322 @@ export default function ManagerFailedPaymentFixesPage() {
               </div>
             )}
 
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-              <Input
-                placeholder="Search by name, phone, or policy number..."
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  setPage(1);
-                }}
-              />
-
+            <div className="flex flex-col gap-3">
               <div className="flex items-center gap-2">
-                <FilterIcon className="h-4 w-4 text-muted-foreground hidden sm:block" />
-                <MultiSelect
-                  options={POLICY_STATUS_OPTIONS}
-                  selected={statusFilter}
-                  onChange={(selected) => {
-                    setStatusFilter(selected);
+                <Input
+                  placeholder="Search by name, phone, or policy number..."
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
                     setPage(1);
                   }}
-                  placeholder="All Statuses"
-                  className="w-full lg:w-[200px]"
-                  showAllOption
-                  allOptionLabel="All Statuses"
+                  className="max-w-[300px]"
                 />
-                <MultiSelect
-                  options={availableCarriers}
-                  selected={carrierFilter}
-                  onChange={(selected) => {
-                    setCarrierFilter(selected);
-                    setPage(1);
-                  }}
-                  placeholder="All Carriers"
-                  className="w-full lg:w-[200px]"
-                  showAllOption
-                  allOptionLabel="All Carriers"
-                />
-                <MultiSelect
-                  options={availableGhlStages}
-                  selected={ghlStageFilter}
-                  onChange={(selected) => {
-                    setGhlStageFilter(selected);
-                    setPage(1);
-                  }}
-                  placeholder="All GHL Stages"
-                  className="w-full lg:w-[200px]"
-                  showAllOption
-                  allOptionLabel="All GHL Stages"
-                />
-                <Select
-                  value={agentFilter[0] ?? "all"}
-                  onValueChange={(v) => {
-                    setAgentFilter(v === "all" ? [] : [v]);
-                    setPage(1);
-                  }}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <FilterIcon className="h-4 w-4 text-muted-foreground" />
+                  <MultiSelect
+                    options={POLICY_STATUS_OPTIONS}
+                    selected={statusFilter}
+                    onChange={(selected) => {
+                      setStatusFilter(selected);
+                      setPage(1);
+                    }}
+                    placeholder="Status"
+                    className="w-[150px]"
+                    showAllOption
+                    allOptionLabel="All Statuses"
+                  />
+                  <MultiSelect
+                    options={availableCarriers}
+                    selected={carrierFilter}
+                    onChange={(selected) => {
+                      setCarrierFilter(selected);
+                      setPage(1);
+                    }}
+                    placeholder="Carrier"
+                    className="w-[150px]"
+                    showAllOption
+                    allOptionLabel="All Carriers"
+                  />
+                  <MultiSelect
+                    options={availableGhlStages}
+                    selected={ghlStageFilter}
+                    onChange={(selected) => {
+                      setGhlStageFilter(selected);
+                      setPage(1);
+                    }}
+                    placeholder="GHL Stage"
+                    className="w-[180px]"
+                    showAllOption
+                    allOptionLabel="All Stages"
+                  />
+                  <Select
+                    value={agentFilter[0] ?? "all"}
+                    onValueChange={(v) => {
+                      setAgentFilter(v === "all" ? [] : [v]);
+                      setPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="w-[150px]">
+                      <SelectValue placeholder="Agent" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Agents</SelectItem>
+                      {agents.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {a.display_name ?? a.id}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={agencyFilter[0] ?? "all"}
+                    onValueChange={(v) => {
+                      setAgencyFilter(v === "all" ? [] : [v]);
+                      setPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="w-[160px]">
+                      <SelectValue placeholder="Agency" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Agencies</SelectItem>
+                      {AGENCY_OPTIONS.map((a) => (
+                        <SelectItem key={a} value={a}>
+                          {a}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={assignmentFilter}
+                    onValueChange={(v) => {
+                      setAssignmentFilter(v);
+                      setPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="w-[140px]">
+                      <SelectValue placeholder="Assignment" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ASSIGNMENT_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={tcpaFilter}
+                    onValueChange={(v) => {
+                      setTcpaFilter(v);
+                      setPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="w-[120px]">
+                      <SelectValue placeholder="TCPA" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TCPA_STATUS_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={activeFilter}
+                    onValueChange={(v) => {
+                      setActiveFilter(v);
+                      setPage(1);
+                      setBulkSelectedIds(new Set());
+                    }}
+                  >
+                    <SelectTrigger className="w-[130px]">
+                      <SelectValue placeholder="Active" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ACTIVE_STATUS_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
+                  variant="default"
+                  onClick={handleSync}
+                  disabled={syncing || loading}
+                  size="sm"
                 >
-                  <SelectTrigger className="w-full lg:w-[150px]">
-                    <SelectValue placeholder="Agent" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Agents</SelectItem>
-                    {agents.map((a) => (
-                      <SelectItem key={a.id} value={a.id}>
-                        {a.display_name ?? a.id}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={agencyFilter[0] ?? "all"}
-                  onValueChange={(v) => {
-                    setAgencyFilter(v === "all" ? [] : [v]);
-                    setPage(1);
-                  }}
-                >
-                  <SelectTrigger className="w-full lg:w-[160px]">
-                    <SelectValue placeholder="Agency" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Agencies</SelectItem>
-                    {AGENCY_OPTIONS.map((a) => (
-                      <SelectItem key={a} value={a}>
-                        {a}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={assignmentFilter}
-                  onValueChange={(v) => {
-                    setAssignmentFilter(v);
-                    setPage(1);
-                  }}
-                >
-                  <SelectTrigger className="w-full lg:w-[150px]">
-                    <SelectValue placeholder="Assignment" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ASSIGNMENT_OPTIONS.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={tcpaFilter}
-                  onValueChange={(v) => {
-                    setTcpaFilter(v);
-                    setPage(1);
-                  }}
-                >
-                  <SelectTrigger className="w-full lg:w-[140px]">
-                    <SelectValue placeholder="TCPA" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {TCPA_STATUS_OPTIONS.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={activeFilter}
-                  onValueChange={(v) => {
-                    setActiveFilter(v);
-                    setPage(1);
-                  }}
-                >
-                  <SelectTrigger className="w-full lg:w-[140px]">
-                    <SelectValue placeholder="Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ACTIVE_STATUS_OPTIONS.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  {syncing ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCwIcon className="mr-2 h-4 w-4" />
+                  )}
+                  Sync
+                </Button>
               </div>
 
-              <Button
-                variant="default"
-                className="lg:ml-auto"
-                onClick={handleSync}
-                disabled={syncing || loading}
-              >
-                {syncing ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCwIcon className="mr-2 h-4 w-4" />
-                )}
-                Sync
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setBulkAssignOpen(true)}
+                  size="sm"
+                >
+                  Bulk Assign
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setBulkUnassignOpen(true)}
+                  size="sm"
+                >
+                  Bulk Unassign
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    setDeactivateDqScanning(true);
+                    setDeactivateDqChecked(new Set());
+                    setDeactivateDqLeads([]);
 
-              <Button
-                variant="outline"
-                onClick={() => setBulkAssignOpen(true)}
-              >
-                Bulk Assign
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => setBulkUnassignOpen(true)}
-              >
-                Bulk Unassign
-              </Button>
+                    let query = supabase
+                      .from("failed_payment_fixes")
+                      .select("id, name, phone_number, policy_number, ghl_stage")
+                      .eq("is_active", true);
+
+                    const trimmed = search.trim();
+                    if (trimmed) {
+                      const escaped = trimmed.replace(/,/g, "");
+                      query = query.or(
+                        `name.ilike.%${escaped}%,phone_number.ilike.%${escaped}%,policy_number.ilike.%${escaped}%`,
+                      );
+                    }
+                    if (statusFilter.length > 0) query = query.in("policy_status", statusFilter);
+                    if (carrierFilter.length > 0) query = query.in("carrier", carrierFilter);
+                    if (ghlStageFilter.length > 0) query = query.in("ghl_stage", ghlStageFilter);
+                    if (tcpaFilter === "flagged") query = query.eq("tcpa_flag", true);
+                    else if (tcpaFilter === "clear") query = query.eq("tcpa_flag", false);
+
+                    const PAGE_SIZE = 1000;
+                    const nameChargebackCounts = new Map<string, number>();
+                    const allRows: Array<{ id: string; name: string | null; phone_number: string | null; policy_number: string; ghl_stage: string | null }> = [];
+                    let from = 0;
+
+                    while (true) {
+                      const { data } = await query.range(from, from + PAGE_SIZE - 1);
+                      const rows = (data ?? []) as typeof allRows;
+                      allRows.push(...rows);
+                      for (const row of rows) {
+                        if (row.name && row.ghl_stage && row.ghl_stage.toLowerCase().includes("chargeback")) {
+                          const key = row.name.trim().toLowerCase();
+                          nameChargebackCounts.set(key, (nameChargebackCounts.get(key) ?? 0) + 1);
+                        }
+                      }
+                      if (rows.length < PAGE_SIZE) break;
+                      from += PAGE_SIZE;
+                    }
+
+                    const dqNames = new Set<string>();
+                    for (const [name, count] of nameChargebackCounts) {
+                      if (count > 1) dqNames.add(name);
+                    }
+
+                    const dqLeads = allRows
+                      .filter(r => r.name && dqNames.has(r.name.trim().toLowerCase()))
+                      .map(r => ({
+                        id: r.id,
+                        name: r.name,
+                        phone_number: r.phone_number,
+                        policy_number: r.policy_number,
+                        chargebackCount: nameChargebackCounts.get(r.name.trim().toLowerCase()) ?? 1,
+                      }));
+
+                    dqLeads.sort((a, b) => a.name?.localeCompare(b.name ?? "") ?? 0);
+                    setDeactivateDqLeads(dqLeads);
+                    setDeactivateDqScanning(false);
+                    setDeactivateDqDialogOpen(true);
+                  }}
+                  size="sm"
+                >
+                  <ShieldAlertIcon className="mr-1 h-4 w-4" />
+                  Deactivate DQ
+                </Button>
+                {activeFilter === "inactive" && (
+                  <div className="flex items-center gap-2 ml-auto">
+                    <span className="text-sm text-muted-foreground">
+                      {bulkSelectedIds.size} selected
+                    </span>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      disabled={bulkSelectedIds.size === 0 || bulkActivating}
+                      onClick={async () => {
+                        if (bulkSelectedIds.size === 0) return;
+                        setBulkActivating(true);
+                        try {
+                          const ids = Array.from(bulkSelectedIds);
+                          for (const batch of chunk(ids, 200)) {
+                            await supabase
+                              .from("failed_payment_fixes")
+                              .update({ is_active: true })
+                              .in("id", batch);
+                          }
+                          toast({ title: "Reactivated", description: `${ids.length} lead(s) activated` });
+                          setBulkSelectedIds(new Set());
+                          await loadRows();
+                          await loadStats();
+                        } catch (err) {
+                          toast({ title: "Error", description: "Failed to reactivate leads", variant: "destructive" });
+                        } finally {
+                          setBulkActivating(false);
+                        }
+                      }}
+                    >
+                      {bulkActivating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                      Reactivate Selected ({bulkSelectedIds.size})
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => setBulkSelectedIds(new Set())}>
+                      Clear Selection
+                    </Button>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="rounded-md border overflow-x-auto">
               <table className="w-full text-sm min-w-[1000px]">
                 <thead className="bg-muted/30">
                   <tr>
+                    <th className="w-[40px] px-3 py-2">
+                      {activeFilter === "inactive" && rows.some(r => !r.is_active) ? (
+                        <div className="flex items-center gap-1">
+                          <Checkbox
+                            checked={selectAllChecked}
+                            onCheckedChange={handleSelectAllToggle}
+                            disabled={selectAllLoading}
+                          />
+                          {selectAllLoading ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <ChevronDownIcon className="h-4 w-4 cursor-pointer" />
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="start">
+                                <DropdownMenuItem onClick={selectAllOnPage}>
+                                  Select on page ({rows.filter(r => !r.is_active).length})
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={selectAllOnAllPages}>
+                                  Select all ({totalRows ?? "..."} inactive)
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
+                        </div>
+                      ) : null}
+                    </th>
                     <th className="text-left px-3 py-2 font-medium">Name</th>
                     <th className="text-left px-3 py-2 font-medium">Phone</th>
                     <th className="text-left px-3 py-2 font-medium">Policy #</th>
@@ -848,13 +1071,13 @@ export default function ManagerFailedPaymentFixesPage() {
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={11} className="p-6 text-center text-muted-foreground">
+                      <td colSpan={12} className="p-6 text-center text-muted-foreground">
                         <Loader2 className="h-6 w-6 animate-spin inline mr-2" /> Loading...
                       </td>
                     </tr>
                   ) : rows.length === 0 ? (
                     <tr>
-                      <td colSpan={11} className="p-6 text-center text-muted-foreground">
+                      <td colSpan={12} className="p-6 text-center text-muted-foreground">
                         No failed payment fixes found.
                       </td>
                     </tr>
@@ -869,6 +1092,24 @@ export default function ManagerFailedPaymentFixesPage() {
                           key={row.id}
                           className={`border-t ${isInactive ? "bg-red-50/40 opacity-70" : ""}`}
                         >
+                          <td className="px-3 py-2">
+                            {isInactive && (
+                              <Checkbox
+                                checked={bulkSelectedIds.has(row.id)}
+                                onCheckedChange={(checked) => {
+                                  setBulkSelectedIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (checked) {
+                                      next.add(row.id);
+                                    } else {
+                                      next.delete(row.id);
+                                    }
+                                    return next;
+                                  });
+                                }}
+                              />
+                            )}
+                          </td>
                           <td className="px-3 py-2 truncate max-w-[200px]">
                             {row.name ?? "Unknown"}
                           </td>
@@ -1047,6 +1288,122 @@ export default function ManagerFailedPaymentFixesPage() {
             <Button variant="destructive" onClick={handleConfirmUnassign} disabled={unassigning || !activeUnassign}>
               {unassigning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Unassign
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deactivateDqDialogOpen} onOpenChange={setDeactivateDqDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Deactivate DQ Leads</DialogTitle>
+          </DialogHeader>
+          <div className="py-2 flex flex-col gap-3">
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold">⚠️ DQ Warning:</span>
+                <span>Leads with same name appearing in multiple Chargeback stage entries will be marked inactive.</span>
+              </div>
+            </div>
+            {deactivateDqScanning ? (
+              <div className="flex items-center gap-2 py-4">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-sm text-muted-foreground">Scanning leads for DQ...</span>
+              </div>
+            ) : (
+              <>
+                <div className="text-sm">
+                  Found <span className="font-semibold text-foreground">{deactivateDqLeads.length}</span> DQ lead(s)
+                  {deactivateDqLeads.length > 0 && (
+                    <span className="ml-2 text-muted-foreground">
+                      — {deactivateDqChecked.size} selected
+                    </span>
+                  )}
+                </div>
+                {deactivateDqLeads.length > 0 ? (
+                  <div className="border rounded-md max-h-[300px] overflow-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/30 sticky top-0">
+                        <tr>
+                          <th className="w-[40px] px-3 py-2"></th>
+                          <th className="text-left px-3 py-2 font-medium">Name</th>
+                          <th className="text-left px-3 py-2 font-medium">Phone</th>
+                          <th className="text-left px-3 py-2 font-medium">Policy #</th>
+                          <th className="text-left px-3 py-2 font-medium text-red-600">Chargebacks</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {deactivateDqLeads.map((lead) => (
+                          <tr key={lead.id} className="border-t">
+                            <td className="px-3 py-2">
+                              <Checkbox
+                                checked={deactivateDqChecked.has(lead.id)}
+                                onCheckedChange={(checked) => {
+                                  setDeactivateDqChecked((prev) => {
+                                    const next = new Set(prev);
+                                    if (checked) next.add(lead.id);
+                                    else next.delete(lead.id);
+                                    return next;
+                                  });
+                                }}
+                              />
+                            </td>
+                            <td className="px-3 py-2 font-medium text-red-600">{lead.name ?? "-"}</td>
+                            <td className="px-3 py-2 font-mono text-xs">{lead.phone_number ?? "-"}</td>
+                            <td className="px-3 py-2 font-mono text-xs">{lead.policy_number}</td>
+                            <td className="px-3 py-2 text-center text-red-600 font-semibold">{lead.chargebackCount}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="p-4 text-center text-sm text-muted-foreground border rounded-md">
+                    No DQ leads found with current filters.
+                  </div>
+                )}
+                {deactivateDqLeads.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setDeactivateDqChecked(new Set(deactivateDqLeads.map(l => l.id)))}
+                    >
+                      Select All
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setDeactivateDqChecked(new Set())}
+                    >
+                      Deselect All
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeactivateDqDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deactivateDqChecked.size === 0 || deactivateDqScanning}
+              onClick={async () => {
+                const ids = Array.from(deactivateDqChecked);
+                for (const batch of chunk(ids, 200)) {
+                  await supabase.from("failed_payment_fixes").update({ is_active: false }).in("id", batch);
+                }
+                toastRef.current({ title: "DQ Deactivated", description: `${ids.length} lead(s) marked inactive` });
+                setDeactivateDqDialogOpen(false);
+                setDeactivateDqLeads([]);
+                setDeactivateDqChecked(new Set());
+                await loadRows();
+                await loadStats();
+              }}
+            >
+              Deactivate Selected ({deactivateDqChecked.size})
             </Button>
           </DialogFooter>
         </DialogContent>
