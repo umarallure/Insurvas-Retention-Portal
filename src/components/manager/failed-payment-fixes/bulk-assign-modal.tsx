@@ -450,7 +450,7 @@ export function FailedPaymentFixBulkAssignModal(props: BulkAssignModalProps) {
   const handleRun = async () => {
     if (!canRun) return;
     setRunning(true);
-    setProgress({ done: 0, total: plan.length, assigned: 0, tcpa: 0, failed: 0 });
+    setProgress({ done: 0, total: plan.length, assigned: 0, tcpa: 0, failed: 0, dq: 0 });
 
     const {
       data: { session },
