@@ -11,6 +11,16 @@ import { supabase } from "@/lib/supabase";
 import { Loader2 } from "lucide-react";
 import { checkTcpaStatus } from "@/lib/failed-payment-fixes/tcpa";
 
+type PoolRow = {
+  id: string;
+  name: string | null;
+  phone_number: string | null;
+  policy_number: string;
+  carrier: string | null;
+  assigned_agency: string | null;
+  ghl_stage: string | null;
+};
+
 type BulkTcpaCheckModalProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -66,6 +76,7 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
   }, [toast]);
 
   const [loadingPool, setLoadingPool] = React.useState(false);
+  const [pool, setPool] = React.useState<PoolRow[]>([]);
   const [poolCount, setPoolCount] = React.useState<number | null>(null);
   const [stageFilter, setStageFilter] = React.useState<string[]>([]);
   const [carrierFilter, setCarrierFilter] = React.useState<string[]>([]);
@@ -87,25 +98,42 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
   const loadPool = React.useCallback(async () => {
     setLoadingPool(true);
     try {
-      let query = supabase
+      let countQuery = supabase
         .from("failed_payment_fixes")
-        .select("id", { count: "exact" })
-        .eq("is_active", true)
+        .select("id", { count: "exact", head: true })
         .eq("tcpa_flag", false)
         .or("tcpa_checked_at.is.null,tcpa_checked_at.eq.1990-01-01");
 
-      if (stageFilter.length > 0) query = query.in("ghl_stage", stageFilter);
-      if (carrierFilter.length > 0) query = query.in("carrier", carrierFilter);
-      if (agencyFilter !== "all") query = query.eq("assigned_agency", agencyFilter);
-      if (statusFilter.length > 0) query = query.in("policy_status", statusFilter);
-      if (assignedFilter === "assigned") query = query.eq("assigned", true);
-      else if (assignedFilter === "unassigned") query = query.eq("assigned", false);
-      if (activeStatusFilter === "active") query = query.eq("is_active", true);
-      else if (activeStatusFilter === "inactive") query = query.eq("is_active", false);
+      if (stageFilter.length > 0) countQuery = countQuery.in("ghl_stage", stageFilter);
+      if (carrierFilter.length > 0) countQuery = countQuery.in("carrier", carrierFilter);
+      if (agencyFilter !== "all") countQuery = countQuery.eq("assigned_agency", agencyFilter);
+      if (statusFilter.length > 0) countQuery = countQuery.in("policy_status", statusFilter);
+      if (assignedFilter === "assigned") countQuery = countQuery.eq("assigned", true);
+      else if (assignedFilter === "unassigned") countQuery = countQuery.eq("assigned", false);
+      if (activeStatusFilter === "active") countQuery = countQuery.eq("is_active", true);
+      else if (activeStatusFilter === "inactive") countQuery = countQuery.eq("is_active", false);
 
-      const { count, error } = await query;
+      const { count: totalCount } = await countQuery;
+      setPoolCount(totalCount ?? 0);
+
+      let dataQuery = supabase
+        .from("failed_payment_fixes")
+        .select("id, name, phone_number, policy_number, carrier, assigned_agency, ghl_stage")
+        .eq("tcpa_flag", false)
+        .or("tcpa_checked_at.is.null,tcpa_checked_at.eq.1990-01-01");
+
+      if (stageFilter.length > 0) dataQuery = dataQuery.in("ghl_stage", stageFilter);
+      if (carrierFilter.length > 0) dataQuery = dataQuery.in("carrier", carrierFilter);
+      if (agencyFilter !== "all") dataQuery = dataQuery.eq("assigned_agency", agencyFilter);
+      if (statusFilter.length > 0) dataQuery = dataQuery.in("policy_status", statusFilter);
+      if (assignedFilter === "assigned") dataQuery = dataQuery.eq("assigned", true);
+      else if (assignedFilter === "unassigned") dataQuery = dataQuery.eq("assigned", false);
+      if (activeStatusFilter === "active") dataQuery = dataQuery.eq("is_active", true);
+      else if (activeStatusFilter === "inactive") dataQuery = dataQuery.eq("is_active", false);
+
+      const { data, error } = await dataQuery.limit(10);
       if (error) throw error;
-      setPoolCount(count ?? 0);
+      setPool((data ?? []) as PoolRow[]);
     } catch (error) {
       toastRef.current({
         title: "Failed to load pool",
@@ -125,8 +153,7 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
       const { data } = await supabase
         .from("failed_payment_fixes")
         .select("carrier")
-        .eq("is_active", true)
-        .eq("assigned", true)
+        .eq("tcpa_flag", false)
         .not("carrier", "is", null);
       const carriers = new Set<string>();
       (data ?? []).forEach((row: { carrier: string | null }) => {
@@ -137,7 +164,7 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
       setAvailableCarriers(Array.from(carriers).sort());
     };
     void loadCarriers();
-  }, [open, stageFilter, carrierFilter, agencyFilter, statusFilter, assignedFilter, activeStatusFilter]);
+  }, [open, loadPool]);
 
   const handleRun = async () => {
     if (poolCount === null || poolCount === 0 || running) return;
@@ -147,7 +174,6 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
     let query = supabase
       .from("failed_payment_fixes")
       .select("id, phone_number, name, policy_number", { count: "exact" })
-      .eq("is_active", true)
       .eq("tcpa_flag", false)
       .or("tcpa_checked_at.is.null,tcpa_checked_at.eq.1990-01-01");
 
@@ -234,7 +260,15 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
 
         <div className="flex-1 overflow-auto space-y-4 py-2">
           <div className="text-sm text-muted-foreground">
-            Pool: {loadingPool ? "loading…" : `${poolCount ?? 0} active leads with no prior TCPA check`}.
+            Pool: {loadingPool ? (
+              <span className="inline-flex items-center">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading...
+              </span>
+            ) : (
+              <>
+                Showing first {pool.length} of <span className="font-medium">{poolCount ?? 0}</span> leads
+              </>
+            )}.
             TCPA will be checked per lead; flagged leads will be marked inactive.
           </div>
 
@@ -329,6 +363,69 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
               </Select>
             </div>
           </div>
+
+          <Separator />
+
+          <div className="flex items-center gap-4 text-sm">
+            <div className="flex-1">
+              <span className="font-medium">Pool Preview:</span>
+              <span className="text-muted-foreground ml-2">
+                {loadingPool ? (
+                  <span className="inline-flex items-center">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading...
+                  </span>
+                ) : (
+                  <>Showing first 10 of <span className="font-medium">{poolCount ?? 0}</span> leads</>
+                )}
+              </span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void loadPool()}
+              disabled={loadingPool || running}
+            >
+              {loadingPool ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Reload
+            </Button>
+          </div>
+
+          {!loadingPool && pool.length > 0 && (
+            <div className="overflow-auto border rounded-md max-h-[45vh]">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/30 sticky top-0">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium w-[50px]">#</th>
+                    <th className="text-left px-3 py-2 font-medium">Name</th>
+                    <th className="text-left px-3 py-2 font-medium">Phone</th>
+                    <th className="text-left px-3 py-2 font-medium">Policy #</th>
+                    <th className="text-left px-3 py-2 font-medium">Carrier</th>
+                    <th className="text-left px-3 py-2 font-medium">Agency</th>
+                    <th className="text-left px-3 py-2 font-medium">Stage</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pool.map((deal, idx) => (
+                    <tr key={deal.id} className="border-t">
+                      <td className="px-3 py-2 text-muted-foreground">{idx + 1}</td>
+                      <td className="px-3 py-2">{deal.name ?? "-"}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{deal.phone_number ?? "-"}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{deal.policy_number}</td>
+                      <td className="px-3 py-2">{deal.carrier ?? "-"}</td>
+                      <td className="px-3 py-2">{deal.assigned_agency ?? "-"}</td>
+                      <td className="px-3 py-2">{deal.ghl_stage ?? "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {!loadingPool && pool.length === 0 && (
+            <div className="p-4 text-sm text-muted-foreground text-center border rounded-md">
+              No leads match the selected filters.
+            </div>
+          )}
 
           <Separator />
 
