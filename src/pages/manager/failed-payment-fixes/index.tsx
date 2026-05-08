@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { FilterIcon, Loader2, RefreshCwIcon, ShieldAlertIcon, ChevronDownIcon } from "lucide-react";
 
-import { assignFailedPaymentFix, unassignFailedPaymentFix } from "@/lib/failed-payment-fixes/assign";
+import { assignFailedPaymentFix, unassignFailedPaymentFix, checkTcpaForFailedPaymentFixes } from "@/lib/failed-payment-fixes/assign";
 import { FailedPaymentFixBulkAssignModal } from "@/components/manager/failed-payment-fixes/bulk-assign-modal";
 import { FailedPaymentFixBulkUnassignModal } from "@/components/manager/failed-payment-fixes/bulk-unassign-modal";
 
@@ -157,6 +157,10 @@ export default function ManagerFailedPaymentFixesPage() {
   const [deactivateDqLeads, setDeactivateDqLeads] = useState<Array<{ id: string; name: string | null; phone_number: string | null; policy_number: string; chargebackCount: number }>>([]);
   const [deactivateDqChecked, setDeactivateDqChecked] = useState<Set<string>>(new Set());
   const [deactivateDqScanning, setDeactivateDqScanning] = useState(false);
+
+  const [tcpaCheckDialogOpen, setTcpaCheckDialogOpen] = useState(false);
+  const [tcpaCheckRunning, setTcpaCheckRunning] = useState(false);
+  const [tcpaCheckResult, setTcpaCheckResult] = useState<{ checked: number; tcpaFound: number; clear: number; errors: number } | null>(null);
 
   const selectAllOnPage = useCallback(() => {
     const ids = rows.filter(r => !r.is_active).map(r => r.id);
@@ -981,6 +985,17 @@ export default function ManagerFailedPaymentFixesPage() {
                   <ShieldAlertIcon className="mr-1 h-4 w-4" />
                   Deactivate DQ
                 </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setTcpaCheckResult(null);
+                    setTcpaCheckDialogOpen(true);
+                  }}
+                  size="sm"
+                >
+                  <ShieldAlertIcon className="mr-1 h-4 w-4" />
+                  TCPA Check
+                </Button>
                 {activeFilter === "inactive" && (
                   <div className="flex items-center gap-2 ml-auto">
                     <span className="text-sm text-muted-foreground">
@@ -1405,6 +1420,95 @@ export default function ManagerFailedPaymentFixesPage() {
             >
               Deactivate Selected ({deactivateDqChecked.size})
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={tcpaCheckDialogOpen} onOpenChange={setTcpaCheckDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>TCPA Check on Assigned Leads</DialogTitle>
+          </DialogHeader>
+          <div className="py-2 flex flex-col gap-3">
+            <div className="bg-amber-50 border border-amber-200 text-amber-700 px-4 py-3 rounded-md">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold">⚠️ TCPA Check:</span>
+                <span>This will run TCPA lookup on all assigned active leads matching current filters. TCPA-flagged leads will be marked inactive.</span>
+              </div>
+            </div>
+            {tcpaCheckRunning ? (
+              <div className="flex items-center gap-2 py-4">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-sm text-muted-foreground">Running TCPA check...</span>
+              </div>
+            ) : tcpaCheckResult ? (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="rounded-lg border bg-card p-3 text-center">
+                    <div className="text-2xl font-bold">{tcpaCheckResult.checked}</div>
+                    <div className="text-xs text-muted-foreground">Checked</div>
+                  </div>
+                  <div className="rounded-lg border bg-card p-3 text-center">
+                    <div className="text-2xl font-bold text-red-600">{tcpaCheckResult.tcpaFound}</div>
+                    <div className="text-xs text-muted-foreground">TCPA Found (Deactivated)</div>
+                  </div>
+                  <div className="rounded-lg border bg-card p-3 text-center">
+                    <div className="text-2xl font-bold text-green-600">{tcpaCheckResult.clear}</div>
+                    <div className="text-xs text-muted-foreground">Clear</div>
+                  </div>
+                  <div className="rounded-lg border bg-card p-3 text-center">
+                    <div className="text-2xl font-bold text-amber-600">{tcpaCheckResult.errors}</div>
+                    <div className="text-xs text-muted-foreground">Errors</div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Only assigned leads with <span className="font-medium">tcpa_flag = false</span> and no prior TCPA check will be processed.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTcpaCheckDialogOpen(false)}>
+              {tcpaCheckResult ? "Close" : "Cancel"}
+            </Button>
+            {!tcpaCheckResult && (
+              <Button
+                variant="destructive"
+                disabled={tcpaCheckRunning}
+                onClick={async () => {
+                  setTcpaCheckRunning(true);
+                  try {
+                    const result = await checkTcpaForFailedPaymentFixes({
+                      agencyFilter: agencyFilter.length > 0 ? agencyFilter : undefined,
+                      carrierFilter: carrierFilter.length > 0 ? carrierFilter : undefined,
+                      stageFilter: ghlStageFilter.length > 0 ? ghlStageFilter : undefined,
+                      statusFilter: statusFilter.length > 0 ? statusFilter : undefined,
+                      search: search,
+                    });
+                    setTcpaCheckResult(result);
+                  } catch (err) {
+                    toastRef.current({ title: "Error", description: "TCPA check failed", variant: "destructive" });
+                  } finally {
+                    setTcpaCheckRunning(false);
+                  }
+                }}
+              >
+                {tcpaCheckRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Run TCPA Check
+              </Button>
+            )}
+            {tcpaCheckResult && (
+              <Button
+                onClick={async () => {
+                  await loadRows();
+                  await loadStats();
+                  setTcpaCheckDialogOpen(false);
+                }}
+              >
+                Done
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
