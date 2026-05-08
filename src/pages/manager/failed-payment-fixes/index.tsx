@@ -1133,11 +1133,13 @@ export default function ManagerFailedPaymentFixesPage() {
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={async () => {
-                                setSelectAllLoading(true);
+                                setTcpaCheckRunning(true);
+                                setTcpaCheckResult({ checked: 0, tcpaFound: 0, clear: 0, errors: 0 });
+                                setTcpaCheckDialogOpen(true);
                                 try {
                                   let query = supabase
                                     .from("failed_payment_fixes")
-                                    .select("id", { count: "exact" });
+                                    .select("id, phone_number", { count: "exact" });
 
                                   const trimmed = search.trim();
                                   if (trimmed) {
@@ -1157,22 +1159,70 @@ export default function ManagerFailedPaymentFixesPage() {
                                   if (agentFilter.length > 0) query = query.in("assigned_to_profile_id", agentFilter);
 
                                   const PAGE_SIZE = 1000;
-                                  const allIds: string[] = [];
+                                  let processed = 0;
+                                  let tcpaFound = 0;
+                                  let clear = 0;
+                                  let errors = 0;
                                   let from = 0;
+
                                   while (true) {
                                     const { data, count } = await query.range(from, from + PAGE_SIZE - 1);
-                                    const rows = (data ?? []) as { id: string }[];
-                                    allIds.push(...rows.map(r => r.id));
-                                    if (rows.length < PAGE_SIZE || (count !== null && allIds.length >= count)) break;
+                                    const rows = (data ?? []) as { id: string; phone_number: string | null }[];
+                                    if (rows.length === 0) break;
+
+                                    const results = await Promise.allSettled(
+                                      rows.map(async (row) => {
+                                        if (!row.phone_number) return { status: "skip" as const };
+                                        const tcpaResult = await checkTcpaStatus(row.phone_number);
+                                        if (tcpaResult.status === "tcpa") {
+                                          await supabase
+                                            .from("failed_payment_fixes")
+                                            .update({
+                                              is_active: false,
+                                              tcpa_flag: true,
+                                              tcpa_checked_at: new Date().toISOString(),
+                                              tcpa_message: tcpaResult.message.slice(0, 2000),
+                                            })
+                                            .eq("id", row.id);
+                                          return { status: "tcpa" as const };
+                                        }
+                                        await supabase
+                                          .from("failed_payment_fixes")
+                                          .update({
+                                            tcpa_flag: false,
+                                            tcpa_checked_at: new Date().toISOString(),
+                                            tcpa_message: tcpaResult.status === "dnc" ? tcpaResult.message.slice(0, 2000) : null,
+                                          })
+                                          .eq("id", row.id);
+                                        return { status: "clear" as const };
+                                      }),
+                                    );
+
+                                    for (const r of results) {
+                                      if (r.status === "fulfilled") {
+                                        if (r.value.status === "tcpa") tcpaFound++;
+                                        else if (r.value.status === "clear") clear++;
+                                      } else {
+                                        errors++;
+                                      }
+                                    }
+                                    processed += rows.length;
+                                    setTcpaCheckResult({ checked: processed, tcpaFound, clear, errors });
+                                    if (rows.length < PAGE_SIZE || (count !== null && processed >= count)) break;
                                     from += PAGE_SIZE;
                                   }
-                                  setBulkSelectedIds(new Set(allIds));
+
+                                  setTcpaCheckResult(prev => prev ? { ...prev, checked: processed } : null);
+                                } catch (err) {
+                                  toastRef.current({ title: "Error", description: "TCPA check failed", variant: "destructive" });
                                 } finally {
-                                  setSelectAllLoading(false);
+                                  setTcpaCheckRunning(false);
+                                  await loadRows();
+                                  await loadStats();
                                 }
                               }}
                             >
-                              Select all {totalRows !== null ? `(${totalRows})` : "..."}
+                              Process All with TCPA Check
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -1539,82 +1589,41 @@ export default function ManagerFailedPaymentFixesPage() {
             <div className="bg-amber-50 border border-amber-200 text-amber-700 px-4 py-3 rounded-md">
               <div className="flex items-center gap-2">
                 <span className="font-semibold">⚠️ TCPA Check:</span>
-                <span>This will run TCPA lookup on all assigned active leads matching current filters. TCPA-flagged leads will be marked inactive.</span>
+                <span>Processing all leads matching current filters. TCPA-flagged leads will be marked inactive.</span>
               </div>
             </div>
-            {tcpaCheckRunning ? (
-              <div className="flex items-center gap-2 py-4">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-sm text-muted-foreground">Running TCPA check...</span>
-              </div>
-            ) : tcpaCheckResult ? (
+            {(tcpaCheckRunning || tcpaCheckResult) && (
               <div className="space-y-2">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div className="rounded-lg border bg-card p-3 text-center">
-                    <div className="text-2xl font-bold">{tcpaCheckResult.checked}</div>
+                    <div className="text-2xl font-bold">{tcpaCheckResult?.checked ?? 0}</div>
                     <div className="text-xs text-muted-foreground">Checked</div>
                   </div>
                   <div className="rounded-lg border bg-card p-3 text-center">
-                    <div className="text-2xl font-bold text-red-600">{tcpaCheckResult.tcpaFound}</div>
+                    <div className="text-2xl font-bold text-red-600">{tcpaCheckResult?.tcpaFound ?? 0}</div>
                     <div className="text-xs text-muted-foreground">TCPA Found (Deactivated)</div>
                   </div>
                   <div className="rounded-lg border bg-card p-3 text-center">
-                    <div className="text-2xl font-bold text-green-600">{tcpaCheckResult.clear}</div>
+                    <div className="text-2xl font-bold text-green-600">{tcpaCheckResult?.clear ?? 0}</div>
                     <div className="text-xs text-muted-foreground">Clear</div>
                   </div>
                   <div className="rounded-lg border bg-card p-3 text-center">
-                    <div className="text-2xl font-bold text-amber-600">{tcpaCheckResult.errors}</div>
+                    <div className="text-2xl font-bold text-amber-600">{tcpaCheckResult?.errors ?? 0}</div>
                     <div className="text-xs text-muted-foreground">Errors</div>
                   </div>
                 </div>
               </div>
-            ) : (
+            )}
+            {!tcpaCheckRunning && !tcpaCheckResult && (
               <p className="text-sm text-muted-foreground">
-                Only assigned leads with <span className="font-medium">tcpa_flag = false</span> and no prior TCPA check will be processed.
+                Click "Process All with TCPA Check" from the table header menu to run on all leads matching current filters.
               </p>
             )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setTcpaCheckDialogOpen(false)}>
-              {tcpaCheckResult ? "Close" : "Cancel"}
+              {tcpaCheckResult && !tcpaCheckRunning ? "Close" : "Cancel"}
             </Button>
-            {!tcpaCheckResult && (
-              <Button
-                variant="destructive"
-                disabled={tcpaCheckRunning}
-                onClick={async () => {
-                  setTcpaCheckRunning(true);
-                  try {
-                    const result = await checkTcpaForFailedPaymentFixes({
-                      agencyFilter: agencyFilter.length > 0 ? agencyFilter : undefined,
-                      carrierFilter: carrierFilter.length > 0 ? carrierFilter : undefined,
-                      stageFilter: ghlStageFilter.length > 0 ? ghlStageFilter : undefined,
-                      statusFilter: statusFilter.length > 0 ? statusFilter : undefined,
-                      search: search,
-                    });
-                    setTcpaCheckResult(result);
-                  } catch (err) {
-                    toastRef.current({ title: "Error", description: "TCPA check failed", variant: "destructive" });
-                  } finally {
-                    setTcpaCheckRunning(false);
-                  }
-                }}
-              >
-                {tcpaCheckRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Run TCPA Check
-              </Button>
-            )}
-            {tcpaCheckResult && (
-              <Button
-                onClick={async () => {
-                  await loadRows();
-                  await loadStats();
-                  setTcpaCheckDialogOpen(false);
-                }}
-              >
-                Done
-              </Button>
-            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
