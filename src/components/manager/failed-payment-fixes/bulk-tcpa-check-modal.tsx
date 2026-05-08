@@ -100,9 +100,7 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
     try {
       let countQuery = supabase
         .from("failed_payment_fixes")
-        .select("id", { count: "exact", head: true })
-        .eq("tcpa_flag", false)
-        .or("tcpa_checked_at.is.null,tcpa_checked_at.eq.1990-01-01");
+        .select("id", { count: "exact", head: true });
 
       if (stageFilter.length > 0) countQuery = countQuery.in("ghl_stage", stageFilter);
       if (carrierFilter.length > 0) countQuery = countQuery.in("carrier", carrierFilter);
@@ -118,9 +116,7 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
 
       let dataQuery = supabase
         .from("failed_payment_fixes")
-        .select("id, name, phone_number, policy_number, carrier, assigned_agency, ghl_stage")
-        .eq("tcpa_flag", false)
-        .or("tcpa_checked_at.is.null,tcpa_checked_at.eq.1990-01-01");
+        .select("id, name, phone_number, policy_number, carrier, assigned_agency, ghl_stage");
 
       if (stageFilter.length > 0) dataQuery = dataQuery.in("ghl_stage", stageFilter);
       if (carrierFilter.length > 0) dataQuery = dataQuery.in("carrier", carrierFilter);
@@ -153,7 +149,6 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
       const { data } = await supabase
         .from("failed_payment_fixes")
         .select("carrier")
-        .eq("tcpa_flag", false)
         .not("carrier", "is", null);
       const carriers = new Set<string>();
       (data ?? []).forEach((row: { carrier: string | null }) => {
@@ -173,9 +168,7 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
 
     let query = supabase
       .from("failed_payment_fixes")
-      .select("id, phone_number, name, policy_number", { count: "exact" })
-      .eq("tcpa_flag", false)
-      .or("tcpa_checked_at.is.null,tcpa_checked_at.eq.1990-01-01");
+      .select("id, phone_number, name, policy_number", { count: "exact" });
 
     if (stageFilter.length > 0) query = query.in("ghl_stage", stageFilter);
     if (carrierFilter.length > 0) query = query.in("carrier", carrierFilter);
