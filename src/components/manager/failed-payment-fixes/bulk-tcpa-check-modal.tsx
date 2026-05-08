@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { flushSync } from "react-dom";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -229,7 +230,9 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
         }
       }
       done += rows.length;
-      setProgress({ done, total: poolCount ?? 0, tcpa, clear, errors });
+      flushSync(() => {
+        setProgress({ done, total: poolCount ?? 0, tcpa, clear, errors });
+      });
 
       if (rows.length < PAGE_SIZE || (count !== null && done >= count)) break;
       from += PAGE_SIZE;
