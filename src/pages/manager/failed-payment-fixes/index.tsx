@@ -1112,16 +1112,71 @@ export default function ManagerFailedPaymentFixesPage() {
                 <thead className="bg-muted/30">
                   <tr>
                     <th className="w-[40px] px-3 py-2">
-                      <Checkbox
-                        checked={rows.length > 0 && rows.every(r => bulkSelectedIds.has(r.id))}
-                        onCheckedChange={(checked) => {
-                          if (checked) {
-                            setBulkSelectedIds(new Set(rows.map(r => r.id)));
-                          } else {
-                            setBulkSelectedIds(new Set());
-                          }
-                        }}
-                      />
+                      <div className="flex items-center gap-1">
+                        <Checkbox
+                          checked={rows.length > 0 && rows.every(r => bulkSelectedIds.has(r.id))}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setBulkSelectedIds(new Set(rows.map(r => r.id)));
+                            } else {
+                              setBulkSelectedIds(new Set());
+                            }
+                          }}
+                        />
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <ChevronDownIcon className="h-4 w-4 cursor-pointer" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="start">
+                            <DropdownMenuItem onClick={() => setBulkSelectedIds(new Set(rows.map(r => r.id)))}>
+                              Select on page ({rows.length})
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={async () => {
+                                setSelectAllLoading(true);
+                                try {
+                                  let query = supabase
+                                    .from("failed_payment_fixes")
+                                    .select("id", { count: "exact" });
+
+                                  const trimmed = search.trim();
+                                  if (trimmed) {
+                                    const escaped = trimmed.replace(/,/g, "");
+                                    query = query.or(
+                                      `name.ilike.%${escaped}%,phone_number.ilike.%${escaped}%,policy_number.ilike.%${escaped}%`,
+                                    );
+                                  }
+                                  if (statusFilter.length > 0) query = query.in("policy_status", statusFilter);
+                                  if (carrierFilter.length > 0) query = query.in("carrier", carrierFilter);
+                                  if (ghlStageFilter.length > 0) query = query.in("ghl_stage", ghlStageFilter);
+                                  if (tcpaFilter === "flagged") query = query.eq("tcpa_flag", true);
+                                  else if (tcpaFilter === "clear") query = query.eq("tcpa_flag", false);
+                                  if (activeFilter === "active") query = query.eq("is_active", true);
+                                  else if (activeFilter === "inactive") query = query.eq("is_active", false);
+                                  if (agencyFilter.length > 0) query = query.in("assigned_agency", agencyFilter);
+                                  if (agentFilter.length > 0) query = query.in("assigned_to_profile_id", agentFilter);
+
+                                  const PAGE_SIZE = 1000;
+                                  const allIds: string[] = [];
+                                  let from = 0;
+                                  while (true) {
+                                    const { data, count } = await query.range(from, from + PAGE_SIZE - 1);
+                                    const rows = (data ?? []) as { id: string }[];
+                                    allIds.push(...rows.map(r => r.id));
+                                    if (rows.length < PAGE_SIZE || (count !== null && allIds.length >= count)) break;
+                                    from += PAGE_SIZE;
+                                  }
+                                  setBulkSelectedIds(new Set(allIds));
+                                } finally {
+                                  setSelectAllLoading(false);
+                                }
+                              }}
+                            >
+                              Select all {totalRows !== null ? `(${totalRows})` : "..."}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     </th>
                     <th className="text-left px-3 py-2 font-medium">Name</th>
                     <th className="text-left px-3 py-2 font-medium">Phone</th>
