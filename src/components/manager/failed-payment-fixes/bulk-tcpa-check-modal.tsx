@@ -91,7 +91,6 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
         .from("failed_payment_fixes")
         .select("id", { count: "exact" })
         .eq("is_active", true)
-        .eq("assigned", true)
         .eq("tcpa_flag", false)
         .or("tcpa_checked_at.is.null,tcpa_checked_at.eq.1990-01-01");
 
@@ -138,7 +137,7 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
       setAvailableCarriers(Array.from(carriers).sort());
     };
     void loadCarriers();
-  }, [open, stageFilter, carrierFilter, agencyFilter, statusFilter]);
+  }, [open, stageFilter, carrierFilter, agencyFilter, statusFilter, assignedFilter, activeStatusFilter]);
 
   const handleRun = async () => {
     if (poolCount === null || poolCount === 0 || running) return;
@@ -149,7 +148,6 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
       .from("failed_payment_fixes")
       .select("id, phone_number, name, policy_number", { count: "exact" })
       .eq("is_active", true)
-      .eq("assigned", true)
       .eq("tcpa_flag", false)
       .or("tcpa_checked_at.is.null,tcpa_checked_at.eq.1990-01-01");
 
@@ -236,7 +234,7 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
 
         <div className="flex-1 overflow-auto space-y-4 py-2">
           <div className="text-sm text-muted-foreground">
-            Pool: {loadingPool ? "loading…" : `${poolCount ?? 0} assigned active leads`}.
+            Pool: {loadingPool ? "loading…" : `${poolCount ?? 0} active leads with no prior TCPA check`}.
             TCPA will be checked per lead; flagged leads will be marked inactive.
           </div>
 
