@@ -68,7 +68,7 @@ const POLICY_STATUS_OPTIONS = [
   "Expired",
 ];
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 500;
 
 const AGENCY_OPTIONS = [
   "Heritage Insurance",
