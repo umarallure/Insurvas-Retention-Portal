@@ -19,10 +19,10 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { FilterIcon, Loader2, RefreshCwIcon, ShieldAlertIcon, ChevronDownIcon } from "lucide-react";
 
-import { assignFailedPaymentFix, unassignFailedPaymentFix, checkTcpaForFailedPaymentFixes } from "@/lib/failed-payment-fixes/assign";
-import { checkTcpaStatus } from "@/lib/failed-payment-fixes/tcpa";
+import { assignFailedPaymentFix, unassignFailedPaymentFix } from "@/lib/failed-payment-fixes/assign";
 import { FailedPaymentFixBulkAssignModal } from "@/components/manager/failed-payment-fixes/bulk-assign-modal";
 import { FailedPaymentFixBulkUnassignModal } from "@/components/manager/failed-payment-fixes/bulk-unassign-modal";
+import { FailedPaymentFixBulkTcpaCheckModal } from "@/components/manager/failed-payment-fixes/bulk-tcpa-check-modal";
 
 type FailedPaymentFixRow = {
   id: string;
@@ -158,10 +158,7 @@ export default function ManagerFailedPaymentFixesPage() {
   const [deactivateDqLeads, setDeactivateDqLeads] = useState<Array<{ id: string; name: string | null; phone_number: string | null; policy_number: string; chargebackCount: number }>>([]);
   const [deactivateDqChecked, setDeactivateDqChecked] = useState<Set<string>>(new Set());
   const [deactivateDqScanning, setDeactivateDqScanning] = useState(false);
-
-  const [tcpaCheckDialogOpen, setTcpaCheckDialogOpen] = useState(false);
-  const [tcpaCheckRunning, setTcpaCheckRunning] = useState(false);
-  const [tcpaCheckResult, setTcpaCheckResult] = useState<{ checked: number; tcpaFound: number; clear: number; errors: number } | null>(null);
+  const [bulkTcpaCheckOpen, setBulkTcpaCheckOpen] = useState(false);
 
   const selectAllOnPage = useCallback(() => {
     const ids = rows.filter(r => !r.is_active).map(r => r.id);
@@ -988,82 +985,11 @@ export default function ManagerFailedPaymentFixesPage() {
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={async () => {
-                    if (bulkSelectedIds.size === 0) {
-                      toastRef.current({ title: "No leads selected", description: "Please select leads first", variant: "destructive" });
-                      return;
-                    }
-                    setTcpaCheckDialogOpen(true);
-                    setTcpaCheckRunning(true);
-                    setTcpaCheckResult(null);
-                    try {
-                      const CONCURRENCY = 25;
-                      const ids = Array.from(bulkSelectedIds);
-                      let checked = 0;
-                      let tcpaFound = 0;
-                      let clear = 0;
-                      let errors = 0;
-
-                      for (let i = 0; i < ids.length; i += CONCURRENCY) {
-                        const batch = ids.slice(i, i + CONCURRENCY);
-                        const { data } = await supabase
-                          .from("failed_payment_fixes")
-                          .select("id, phone_number")
-                          .in("id", batch);
-                        const rows = (data ?? []) as { id: string; phone_number: string | null }[];
-
-                        const results = await Promise.allSettled(
-                          rows.map(async (row) => {
-                            if (!row.phone_number) return { status: "skip" as const };
-                            const tcpaResult = await checkTcpaStatus(row.phone_number);
-                            if (tcpaResult.status === "tcpa") {
-                              await supabase
-                                .from("failed_payment_fixes")
-                                .update({
-                                  is_active: false,
-                                  tcpa_flag: true,
-                                  tcpa_checked_at: new Date().toISOString(),
-                                  tcpa_message: tcpaResult.message.slice(0, 2000),
-                                })
-                                .eq("id", row.id);
-                              return { status: "tcpa" as const };
-                            }
-                            await supabase
-                              .from("failed_payment_fixes")
-                              .update({
-                                tcpa_flag: false,
-                                tcpa_checked_at: new Date().toISOString(),
-                                tcpa_message: tcpaResult.status === "dnc" ? tcpaResult.message.slice(0, 2000) : null,
-                              })
-                              .eq("id", row.id);
-                            return { status: "clear" as const };
-                          }),
-                        );
-
-                        for (const r of results) {
-                          if (r.status === "fulfilled") {
-                            if (r.value.status === "tcpa") tcpaFound++;
-                            else if (r.value.status === "clear") clear++;
-                          } else {
-                            errors++;
-                          }
-                        }
-                        checked += rows.length;
-                      }
-
-                      setTcpaCheckResult({ checked, tcpaFound, clear, errors });
-                      setBulkSelectedIds(new Set());
-                    } catch (err) {
-                      toastRef.current({ title: "Error", description: "TCPA check failed", variant: "destructive" });
-                    } finally {
-                      setTcpaCheckRunning(false);
-                    }
-                  }}
-                  disabled={tcpaCheckRunning || bulkSelectedIds.size === 0}
+                  onClick={() => setBulkTcpaCheckOpen(true)}
                   size="sm"
                 >
-                  {tcpaCheckRunning ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ShieldAlertIcon className="mr-1 h-4 w-4" />}
-                  TCPA Check ({bulkSelectedIds.size})
+                  <ShieldAlertIcon className="mr-1 h-4 w-4" />
+                  Bulk TCPA Check
                 </Button>
                 {activeFilter === "inactive" && (
                   <div className="flex items-center gap-2 ml-auto">
@@ -1127,104 +1053,11 @@ export default function ManagerFailedPaymentFixesPage() {
                           <DropdownMenuTrigger asChild>
                             <ChevronDownIcon className="h-4 w-4 cursor-pointer" />
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="start">
-                            <DropdownMenuItem onClick={() => setBulkSelectedIds(new Set(rows.map(r => r.id)))}>
-                              Select on page ({rows.length})
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={async () => {
-                                setTcpaCheckRunning(true);
-                                setTcpaCheckResult({ checked: 0, tcpaFound: 0, clear: 0, errors: 0 });
-                                setTcpaCheckDialogOpen(true);
-                                try {
-                                  let query = supabase
-                                    .from("failed_payment_fixes")
-                                    .select("id, phone_number", { count: "exact" });
-
-                                  const trimmed = search.trim();
-                                  if (trimmed) {
-                                    const escaped = trimmed.replace(/,/g, "");
-                                    query = query.or(
-                                      `name.ilike.%${escaped}%,phone_number.ilike.%${escaped}%,policy_number.ilike.%${escaped}%`,
-                                    );
-                                  }
-                                  if (statusFilter.length > 0) query = query.in("policy_status", statusFilter);
-                                  if (carrierFilter.length > 0) query = query.in("carrier", carrierFilter);
-                                  if (ghlStageFilter.length > 0) query = query.in("ghl_stage", ghlStageFilter);
-                                  if (tcpaFilter === "flagged") query = query.eq("tcpa_flag", true);
-                                  else if (tcpaFilter === "clear") query = query.eq("tcpa_flag", false);
-                                  if (activeFilter === "active") query = query.eq("is_active", true);
-                                  else if (activeFilter === "inactive") query = query.eq("is_active", false);
-                                  if (agencyFilter.length > 0) query = query.in("assigned_agency", agencyFilter);
-                                  if (agentFilter.length > 0) query = query.in("assigned_to_profile_id", agentFilter);
-
-                                  const PAGE_SIZE = 1000;
-                                  let processed = 0;
-                                  let tcpaFound = 0;
-                                  let clear = 0;
-                                  let errors = 0;
-                                  let from = 0;
-
-                                  while (true) {
-                                    const { data, count } = await query.range(from, from + PAGE_SIZE - 1);
-                                    const rows = (data ?? []) as { id: string; phone_number: string | null }[];
-                                    if (rows.length === 0) break;
-
-                                    const results = await Promise.allSettled(
-                                      rows.map(async (row) => {
-                                        if (!row.phone_number) return { status: "skip" as const };
-                                        const tcpaResult = await checkTcpaStatus(row.phone_number);
-                                        if (tcpaResult.status === "tcpa") {
-                                          await supabase
-                                            .from("failed_payment_fixes")
-                                            .update({
-                                              is_active: false,
-                                              tcpa_flag: true,
-                                              tcpa_checked_at: new Date().toISOString(),
-                                              tcpa_message: tcpaResult.message.slice(0, 2000),
-                                            })
-                                            .eq("id", row.id);
-                                          return { status: "tcpa" as const };
-                                        }
-                                        await supabase
-                                          .from("failed_payment_fixes")
-                                          .update({
-                                            tcpa_flag: false,
-                                            tcpa_checked_at: new Date().toISOString(),
-                                            tcpa_message: tcpaResult.status === "dnc" ? tcpaResult.message.slice(0, 2000) : null,
-                                          })
-                                          .eq("id", row.id);
-                                        return { status: "clear" as const };
-                                      }),
-                                    );
-
-                                    for (const r of results) {
-                                      if (r.status === "fulfilled") {
-                                        if (r.value.status === "tcpa") tcpaFound++;
-                                        else if (r.value.status === "clear") clear++;
-                                      } else {
-                                        errors++;
-                                      }
-                                    }
-                                    processed += rows.length;
-                                    setTcpaCheckResult({ checked: processed, tcpaFound, clear, errors });
-                                    if (rows.length < PAGE_SIZE || (count !== null && processed >= count)) break;
-                                    from += PAGE_SIZE;
-                                  }
-
-                                  setTcpaCheckResult(prev => prev ? { ...prev, checked: processed } : null);
-                                } catch (err) {
-                                  toastRef.current({ title: "Error", description: "TCPA check failed", variant: "destructive" });
-                                } finally {
-                                  setTcpaCheckRunning(false);
-                                  await loadRows();
-                                  await loadStats();
-                                }
-                              }}
-                            >
-                              Process All with TCPA Check
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
+<DropdownMenuContent align="start">
+                                <DropdownMenuItem onClick={() => setBulkSelectedIds(new Set(rows.map(r => r.id)))}>
+                                  Select on page ({rows.length})
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
                     </th>
@@ -1580,54 +1413,6 @@ export default function ManagerFailedPaymentFixesPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={tcpaCheckDialogOpen} onOpenChange={setTcpaCheckDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>TCPA Check on Assigned Leads</DialogTitle>
-          </DialogHeader>
-          <div className="py-2 flex flex-col gap-3">
-            <div className="bg-amber-50 border border-amber-200 text-amber-700 px-4 py-3 rounded-md">
-              <div className="flex items-center gap-2">
-                <span className="font-semibold">⚠️ TCPA Check:</span>
-                <span>Processing all leads matching current filters. TCPA-flagged leads will be marked inactive.</span>
-              </div>
-            </div>
-            {(tcpaCheckRunning || tcpaCheckResult) && (
-              <div className="space-y-2">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <div className="rounded-lg border bg-card p-3 text-center">
-                    <div className="text-2xl font-bold">{tcpaCheckResult?.checked ?? 0}</div>
-                    <div className="text-xs text-muted-foreground">Checked</div>
-                  </div>
-                  <div className="rounded-lg border bg-card p-3 text-center">
-                    <div className="text-2xl font-bold text-red-600">{tcpaCheckResult?.tcpaFound ?? 0}</div>
-                    <div className="text-xs text-muted-foreground">TCPA Found (Deactivated)</div>
-                  </div>
-                  <div className="rounded-lg border bg-card p-3 text-center">
-                    <div className="text-2xl font-bold text-green-600">{tcpaCheckResult?.clear ?? 0}</div>
-                    <div className="text-xs text-muted-foreground">Clear</div>
-                  </div>
-                  <div className="rounded-lg border bg-card p-3 text-center">
-                    <div className="text-2xl font-bold text-amber-600">{tcpaCheckResult?.errors ?? 0}</div>
-                    <div className="text-xs text-muted-foreground">Errors</div>
-                  </div>
-                </div>
-              </div>
-            )}
-            {!tcpaCheckRunning && !tcpaCheckResult && (
-              <p className="text-sm text-muted-foreground">
-                Click "Process All with TCPA Check" from the table header menu to run on all leads matching current filters.
-              </p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setTcpaCheckDialogOpen(false)}>
-              {tcpaCheckResult && !tcpaCheckRunning ? "Close" : "Cancel"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <FailedPaymentFixBulkAssignModal
         open={bulkAssignOpen}
         onOpenChange={setBulkAssignOpen}
@@ -1641,6 +1426,15 @@ export default function ManagerFailedPaymentFixesPage() {
       <FailedPaymentFixBulkUnassignModal
         open={bulkUnassignOpen}
         onOpenChange={setBulkUnassignOpen}
+        onCompleted={() => {
+          void loadRows();
+          void loadStats();
+        }}
+      />
+
+      <FailedPaymentFixBulkTcpaCheckModal
+        open={bulkTcpaCheckOpen}
+        onOpenChange={setBulkTcpaCheckOpen}
         onCompleted={() => {
           void loadRows();
           void loadStats();

@@ -1,0 +1,300 @@
+"use client";
+
+import React from "react";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { MultiSelect } from "@/components/ui/multi-select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/lib/supabase";
+import { Loader2 } from "lucide-react";
+import { checkTcpaStatus } from "@/lib/failed-payment-fixes/tcpa";
+
+type BulkTcpaCheckModalProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCompleted?: () => void;
+};
+
+const STAGE_OPTIONS = [
+  "Chargeback Cancellation",
+  "Chargeback Failed Payment",
+  "FDPF Incorrect Banking Info",
+  "FDPF Insufficient Funds",
+  "FDPF Pending Reason",
+  "Pending Lapse Incorrect Banking Info",
+  "Pending Lapse Insufficient Funds",
+  "Pending Lapse Pending Reason",
+  "Pending Lapse Unauthorized Draft",
+  "Pending Manual Action",
+];
+
+const AGENCY_OPTIONS = [
+  "Heritage Insurance",
+  "Safe Harbor Insurance",
+  "Unlimited Insurance",
+];
+
+const POLICY_STATUS_OPTIONS = [
+  "Failed Payment",
+  "Payment Due",
+  "Active",
+  "Cancelled",
+  "Pending",
+  "Expired",
+];
+
+export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProps) {
+  const { open, onOpenChange, onCompleted } = props;
+  const { toast } = useToast();
+  const toastRef = React.useRef(toast);
+  React.useEffect(() => {
+    toastRef.current = toast;
+  }, [toast]);
+
+  const [loadingPool, setLoadingPool] = React.useState(false);
+  const [poolCount, setPoolCount] = React.useState<number | null>(null);
+  const [stageFilter, setStageFilter] = React.useState<string[]>([]);
+  const [carrierFilter, setCarrierFilter] = React.useState<string[]>([]);
+  const [agencyFilter, setAgencyFilter] = React.useState<string>("all");
+  const [statusFilter, setStatusFilter] = React.useState<string[]>([]);
+
+  const [running, setRunning] = React.useState(false);
+  const [availableCarriers, setAvailableCarriers] = React.useState<string[]>([]);
+  const [progress, setProgress] = React.useState<{
+    done: number;
+    total: number;
+    tcpa: number;
+    clear: number;
+    errors: number;
+  }>({ done: 0, total: 0, tcpa: 0, clear: 0, errors: 0 });
+
+  const loadPool = React.useCallback(async () => {
+    setLoadingPool(true);
+    try {
+      let query = supabase
+        .from("failed_payment_fixes")
+        .select("id", { count: "exact" })
+        .eq("is_active", true)
+        .eq("assigned", true)
+        .eq("tcpa_flag", false)
+        .or("tcpa_checked_at.is.null,tcpa_checked_at.eq.1990-01-01");
+
+      if (stageFilter.length > 0) query = query.in("ghl_stage", stageFilter);
+      if (carrierFilter.length > 0) query = query.in("carrier", carrierFilter);
+      if (agencyFilter !== "all") query = query.eq("assigned_agency", agencyFilter);
+      if (statusFilter.length > 0) query = query.in("policy_status", statusFilter);
+
+      const { count, error } = await query;
+      if (error) throw error;
+      setPoolCount(count ?? 0);
+    } catch (error) {
+      toastRef.current({
+        title: "Failed to load pool",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingPool(false);
+    }
+  }, [stageFilter, carrierFilter, agencyFilter, statusFilter]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    void loadPool();
+
+    const loadCarriers = async () => {
+      const { data } = await supabase
+        .from("failed_payment_fixes")
+        .select("carrier")
+        .eq("is_active", true)
+        .eq("assigned", true)
+        .not("carrier", "is", null);
+      const carriers = new Set<string>();
+      (data ?? []).forEach((row: { carrier: string | null }) => {
+        if (typeof row.carrier === "string" && row.carrier.trim()) {
+          carriers.add(row.carrier.trim());
+        }
+      });
+      setAvailableCarriers(Array.from(carriers).sort());
+    };
+    void loadCarriers();
+  }, [open, stageFilter, carrierFilter, agencyFilter, statusFilter]);
+
+  const handleRun = async () => {
+    if (poolCount === null || poolCount === 0 || running) return;
+    setRunning(true);
+    setProgress({ done: 0, total: poolCount, tcpa: 0, clear: 0, errors: 0 });
+
+    let query = supabase
+      .from("failed_payment_fixes")
+      .select("id, phone_number, name, policy_number", { count: "exact" })
+      .eq("is_active", true)
+      .eq("assigned", true)
+      .eq("tcpa_flag", false)
+      .or("tcpa_checked_at.is.null,tcpa_checked_at.eq.1990-01-01");
+
+    if (stageFilter.length > 0) query = query.in("ghl_stage", stageFilter);
+    if (carrierFilter.length > 0) query = query.in("carrier", carrierFilter);
+    if (agencyFilter !== "all") query = query.eq("assigned_agency", agencyFilter);
+    if (statusFilter.length > 0) query = query.in("policy_status", statusFilter);
+
+    const PAGE_SIZE = 1000;
+    let tcpa = 0;
+    let clear = 0;
+    let errors = 0;
+    let done = 0;
+    let from = 0;
+
+    while (true) {
+      const { data, count, error } = await query.range(from, from + PAGE_SIZE - 1);
+      if (error) throw error;
+      const rows = (data ?? []) as { id: string; phone_number: string | null; name: string | null; policy_number: string }[];
+      if (rows.length === 0) break;
+
+      const results = await Promise.allSettled(
+        rows.map(async (row) => {
+          if (!row.phone_number) return { status: "skip" as const };
+          const tcpaResult = await checkTcpaStatus(row.phone_number);
+          if (tcpaResult.status === "tcpa") {
+            await supabase
+              .from("failed_payment_fixes")
+              .update({
+                is_active: false,
+                tcpa_flag: true,
+                tcpa_checked_at: new Date().toISOString(),
+                tcpa_message: tcpaResult.message.slice(0, 2000),
+              })
+              .eq("id", row.id);
+            return { status: "tcpa" as const };
+          }
+          await supabase
+            .from("failed_payment_fixes")
+            .update({
+              tcpa_flag: false,
+              tcpa_checked_at: new Date().toISOString(),
+              tcpa_message: tcpaResult.status === "dnc" ? tcpaResult.message.slice(0, 2000) : null,
+            })
+            .eq("id", row.id);
+          return { status: "clear" as const };
+        }),
+      );
+
+      for (const r of results) {
+        if (r.status === "fulfilled") {
+          if (r.value.status === "tcpa") tcpa++;
+          else if (r.value.status === "clear") clear++;
+        } else {
+          errors++;
+        }
+      }
+      done += rows.length;
+      setProgress({ done, total: poolCount ?? 0, tcpa, clear, errors });
+
+      if (rows.length < PAGE_SIZE || (count !== null && done >= count)) break;
+      from += PAGE_SIZE;
+    }
+
+    toastRef.current({
+      title: "TCPA Check complete",
+      description: `Checked ${done} • TCPA found ${tcpa} • Clear ${clear} • Errors ${errors}`,
+    });
+
+    setRunning(false);
+    onCompleted?.();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="!w-[90vw] !max-w-none !h-[85vh] overflow-hidden flex flex-col p-6">
+        <DialogHeader>
+          <DialogTitle>Bulk TCPA Check</DialogTitle>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-auto space-y-4 py-2">
+          <div className="text-sm text-muted-foreground">
+            Pool: {loadingPool ? "loading…" : `${poolCount ?? 0} assigned active leads`}.
+            TCPA will be checked per lead; flagged leads will be marked inactive.
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-medium">Filter by Agency</span>
+              <Select value={agencyFilter} onValueChange={(v) => setAgencyFilter(v)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="All Agencies" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Agencies</SelectItem>
+                  {AGENCY_OPTIONS.map((agency) => (
+                    <SelectItem key={agency} value={agency}>
+                      {agency}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-medium">Filter by Carrier</span>
+              <MultiSelect
+                options={availableCarriers}
+                selected={carrierFilter}
+                onChange={(selected) => setCarrierFilter(selected)}
+                placeholder="All Carriers"
+                className="w-full"
+                showAllOption={true}
+                allOptionLabel="All Carriers"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-medium">Filter by Stage</span>
+              <MultiSelect
+                options={STAGE_OPTIONS}
+                selected={stageFilter}
+                onChange={(selected) => setStageFilter(selected)}
+                placeholder="All Stages"
+                className="w-full"
+                showAllOption={true}
+                allOptionLabel="All Stages"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <span className="text-sm font-medium">Filter by Status</span>
+            <MultiSelect
+              options={POLICY_STATUS_OPTIONS}
+              selected={statusFilter}
+              onChange={(selected) => setStatusFilter(selected)}
+              placeholder="All Statuses"
+              className="w-full"
+              showAllOption={true}
+              allOptionLabel="All Statuses"
+            />
+          </div>
+
+          <Separator />
+
+          {(running || progress.total > 0) && (
+            <div className="text-xs text-muted-foreground">
+              Progress {progress.done}/{progress.total} • TCPA {progress.tcpa} • Clear {progress.clear} • Errors {progress.errors}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={running}>
+            Close
+          </Button>
+          <Button onClick={handleRun} disabled={!poolCount || poolCount === 0 || running}>
+            {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Run TCPA Check
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
