@@ -45,6 +45,18 @@ const POLICY_STATUS_OPTIONS = [
   "Expired",
 ];
 
+const ASSIGNED_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "assigned", label: "Assigned" },
+  { value: "unassigned", label: "Unassigned" },
+];
+
+const ACTIVE_STATUS_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "active", label: "Active" },
+  { value: "inactive", label: "Inactive" },
+];
+
 export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProps) {
   const { open, onOpenChange, onCompleted } = props;
   const { toast } = useToast();
@@ -59,6 +71,8 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
   const [carrierFilter, setCarrierFilter] = React.useState<string[]>([]);
   const [agencyFilter, setAgencyFilter] = React.useState<string>("all");
   const [statusFilter, setStatusFilter] = React.useState<string[]>([]);
+  const [assignedFilter, setAssignedFilter] = React.useState<string>("all");
+  const [activeStatusFilter, setActiveStatusFilter] = React.useState<string>("all");
 
   const [running, setRunning] = React.useState(false);
   const [availableCarriers, setAvailableCarriers] = React.useState<string[]>([]);
@@ -85,6 +99,10 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
       if (carrierFilter.length > 0) query = query.in("carrier", carrierFilter);
       if (agencyFilter !== "all") query = query.eq("assigned_agency", agencyFilter);
       if (statusFilter.length > 0) query = query.in("policy_status", statusFilter);
+      if (assignedFilter === "assigned") query = query.eq("assigned", true);
+      else if (assignedFilter === "unassigned") query = query.eq("assigned", false);
+      if (activeStatusFilter === "active") query = query.eq("is_active", true);
+      else if (activeStatusFilter === "inactive") query = query.eq("is_active", false);
 
       const { count, error } = await query;
       if (error) throw error;
@@ -98,7 +116,7 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
     } finally {
       setLoadingPool(false);
     }
-  }, [stageFilter, carrierFilter, agencyFilter, statusFilter]);
+  }, [stageFilter, carrierFilter, agencyFilter, statusFilter, assignedFilter, activeStatusFilter]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -139,6 +157,10 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
     if (carrierFilter.length > 0) query = query.in("carrier", carrierFilter);
     if (agencyFilter !== "all") query = query.eq("assigned_agency", agencyFilter);
     if (statusFilter.length > 0) query = query.in("policy_status", statusFilter);
+    if (assignedFilter === "assigned") query = query.eq("assigned", true);
+    else if (assignedFilter === "unassigned") query = query.eq("assigned", false);
+    if (activeStatusFilter === "active") query = query.eq("is_active", true);
+    else if (activeStatusFilter === "inactive") query = query.eq("is_active", false);
 
     const PAGE_SIZE = 1000;
     let tcpa = 0;
@@ -274,6 +296,40 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
               showAllOption={true}
               allOptionLabel="All Statuses"
             />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-medium">Filter by Assignment</span>
+              <Select value={assignedFilter} onValueChange={(v) => setAssignedFilter(v)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="All" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ASSIGNED_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-medium">Filter by Active Status</span>
+              <Select value={activeStatusFilter} onValueChange={(v) => setActiveStatusFilter(v)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="All" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ACTIVE_STATUS_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           <Separator />
