@@ -20,6 +20,7 @@ import { supabase } from "@/lib/supabase";
 import { FilterIcon, Loader2, RefreshCwIcon, ShieldAlertIcon, ChevronDownIcon } from "lucide-react";
 
 import { assignFailedPaymentFix, unassignFailedPaymentFix, checkTcpaForFailedPaymentFixes } from "@/lib/failed-payment-fixes/assign";
+import { checkTcpaStatus } from "@/lib/failed-payment-fixes/tcpa";
 import { FailedPaymentFixBulkAssignModal } from "@/components/manager/failed-payment-fixes/bulk-assign-modal";
 import { FailedPaymentFixBulkUnassignModal } from "@/components/manager/failed-payment-fixes/bulk-unassign-modal";
 
@@ -987,14 +988,82 @@ export default function ManagerFailedPaymentFixesPage() {
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => {
-                    setTcpaCheckResult(null);
+                  onClick={async () => {
+                    if (bulkSelectedIds.size === 0) {
+                      toastRef.current({ title: "No leads selected", description: "Please select leads first", variant: "destructive" });
+                      return;
+                    }
                     setTcpaCheckDialogOpen(true);
+                    setTcpaCheckRunning(true);
+                    setTcpaCheckResult(null);
+                    try {
+                      const CONCURRENCY = 25;
+                      const ids = Array.from(bulkSelectedIds);
+                      let checked = 0;
+                      let tcpaFound = 0;
+                      let clear = 0;
+                      let errors = 0;
+
+                      for (let i = 0; i < ids.length; i += CONCURRENCY) {
+                        const batch = ids.slice(i, i + CONCURRENCY);
+                        const { data } = await supabase
+                          .from("failed_payment_fixes")
+                          .select("id, phone_number")
+                          .in("id", batch);
+                        const rows = (data ?? []) as { id: string; phone_number: string | null }[];
+
+                        const results = await Promise.allSettled(
+                          rows.map(async (row) => {
+                            if (!row.phone_number) return { status: "skip" as const };
+                            const tcpaResult = await checkTcpaStatus(row.phone_number);
+                            if (tcpaResult.status === "tcpa") {
+                              await supabase
+                                .from("failed_payment_fixes")
+                                .update({
+                                  is_active: false,
+                                  tcpa_flag: true,
+                                  tcpa_checked_at: new Date().toISOString(),
+                                  tcpa_message: tcpaResult.message.slice(0, 2000),
+                                })
+                                .eq("id", row.id);
+                              return { status: "tcpa" as const };
+                            }
+                            await supabase
+                              .from("failed_payment_fixes")
+                              .update({
+                                tcpa_flag: false,
+                                tcpa_checked_at: new Date().toISOString(),
+                                tcpa_message: tcpaResult.status === "dnc" ? tcpaResult.message.slice(0, 2000) : null,
+                              })
+                              .eq("id", row.id);
+                            return { status: "clear" as const };
+                          }),
+                        );
+
+                        for (const r of results) {
+                          if (r.status === "fulfilled") {
+                            if (r.value.status === "tcpa") tcpaFound++;
+                            else if (r.value.status === "clear") clear++;
+                          } else {
+                            errors++;
+                          }
+                        }
+                        checked += rows.length;
+                      }
+
+                      setTcpaCheckResult({ checked, tcpaFound, clear, errors });
+                      setBulkSelectedIds(new Set());
+                    } catch (err) {
+                      toastRef.current({ title: "Error", description: "TCPA check failed", variant: "destructive" });
+                    } finally {
+                      setTcpaCheckRunning(false);
+                    }
                   }}
+                  disabled={tcpaCheckRunning || bulkSelectedIds.size === 0}
                   size="sm"
                 >
-                  <ShieldAlertIcon className="mr-1 h-4 w-4" />
-                  TCPA Check
+                  {tcpaCheckRunning ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ShieldAlertIcon className="mr-1 h-4 w-4" />}
+                  TCPA Check ({bulkSelectedIds.size})
                 </Button>
                 {activeFilter === "inactive" && (
                   <div className="flex items-center gap-2 ml-auto">
@@ -1043,32 +1112,16 @@ export default function ManagerFailedPaymentFixesPage() {
                 <thead className="bg-muted/30">
                   <tr>
                     <th className="w-[40px] px-3 py-2">
-                      {activeFilter === "inactive" && rows.some(r => !r.is_active) ? (
-                        <div className="flex items-center gap-1">
-                          <Checkbox
-                            checked={selectAllChecked}
-                            onCheckedChange={handleSelectAllToggle}
-                            disabled={selectAllLoading}
-                          />
-                          {selectAllLoading ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <ChevronDownIcon className="h-4 w-4 cursor-pointer" />
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="start">
-                                <DropdownMenuItem onClick={selectAllOnPage}>
-                                  Select on page ({rows.filter(r => !r.is_active).length})
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={selectAllOnAllPages}>
-                                  Select all ({totalRows ?? "..."} inactive)
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          )}
-                        </div>
-                      ) : null}
+                      <Checkbox
+                        checked={rows.length > 0 && rows.every(r => bulkSelectedIds.has(r.id))}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setBulkSelectedIds(new Set(rows.map(r => r.id)));
+                          } else {
+                            setBulkSelectedIds(new Set());
+                          }
+                        }}
+                      />
                     </th>
                     <th className="text-left px-3 py-2 font-medium">Name</th>
                     <th className="text-left px-3 py-2 font-medium">Phone</th>
@@ -1108,22 +1161,20 @@ export default function ManagerFailedPaymentFixesPage() {
                           className={`border-t ${isInactive ? "bg-red-50/40 opacity-70" : ""}`}
                         >
                           <td className="px-3 py-2">
-                            {isInactive && (
-                              <Checkbox
-                                checked={bulkSelectedIds.has(row.id)}
-                                onCheckedChange={(checked) => {
-                                  setBulkSelectedIds((prev) => {
-                                    const next = new Set(prev);
-                                    if (checked) {
-                                      next.add(row.id);
-                                    } else {
-                                      next.delete(row.id);
-                                    }
-                                    return next;
-                                  });
-                                }}
-                              />
-                            )}
+                            <Checkbox
+                              checked={bulkSelectedIds.has(row.id)}
+                              onCheckedChange={(checked) => {
+                                setBulkSelectedIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (checked) {
+                                    next.add(row.id);
+                                  } else {
+                                    next.delete(row.id);
+                                  }
+                                  return next;
+                                });
+                              }}
+                            />
                           </td>
                           <td className="px-3 py-2 truncate max-w-[200px]">
                             {row.name ?? "Unknown"}
