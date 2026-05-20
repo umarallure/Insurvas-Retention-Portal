@@ -140,6 +140,7 @@ export function NewSaleWorkflow({
             { id: 15, name: "Aflac" },
             { id: 18, name: "MOH" },
             { id: 26, name: "Sentinel Security Life" },
+            { id: 27, name: "CoreBridge" },
           ]);
         }
       } catch (err) {
@@ -152,6 +153,7 @@ export function NewSaleWorkflow({
           { id: 15, name: "Aflac" },
           { id: 18, name: "MOH" },
           { id: 26, name: "Sentinel Security Life" },
+          { id: 27, name: "CoreBridge" },
         ]);
       }
     };

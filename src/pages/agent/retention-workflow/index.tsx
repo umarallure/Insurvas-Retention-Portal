@@ -42,6 +42,7 @@ const carrierOptions = [
   "Aetna",
   "Aflac",
   "American Home Life",
+  "CoreBridge",
   "Mutual of Omaha",
   "Transamerica",
 ];

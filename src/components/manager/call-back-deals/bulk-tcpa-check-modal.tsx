@@ -11,16 +11,13 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { Loader2 } from "lucide-react";
-import { checkTcpaStatus } from "@/lib/failed-payment-fixes/tcpa";
+import { checkTcpaStatus } from "@/lib/call-back-deals/tcpa";
 
 type PoolRow = {
   id: string;
   name: string | null;
   phone_number: string | null;
-  policy_number: string;
-  carrier: string | null;
-  assigned_agency: string | null;
-  ghl_stage: string | null;
+  submission_id: string;
 };
 
 type LogEntry = {
@@ -31,38 +28,17 @@ type LogEntry = {
   message?: string;
 };
 
-type BulkTcpaCheckModalProps = {
+type CallBackBulkTcpaCheckModalProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCompleted?: () => void;
 };
 
 const STAGE_OPTIONS = [
-  "Chargeback Cancellation",
-  "Chargeback Failed Payment",
-  "FDPF Incorrect Banking Info",
-  "FDPF Insufficient Funds",
-  "FDPF Pending Reason",
-  "Pending Lapse Incorrect Banking Info",
-  "Pending Lapse Insufficient Funds",
-  "Pending Lapse Pending Reason",
-  "Pending Lapse Unauthorized Draft",
-  "Pending Manual Action",
-];
-
-const AGENCY_OPTIONS = [
-  "Heritage Insurance",
-  "Safe Harbor Insurance",
-  "Unlimited Insurance",
-];
-
-const POLICY_STATUS_OPTIONS = [
-  "Failed Payment",
-  "Payment Due",
-  "Active",
-  "Cancelled",
-  "Pending",
-  "Expired",
+  "Incomplete Transfer",
+  "Application Withdrawn",
+  "Needs BPO Callback",
+  "Declined Underwriting",
 ];
 
 const ASSIGNED_OPTIONS = [
@@ -76,6 +52,36 @@ const ACTIVE_STATUS_OPTIONS = [
   { value: "active", label: "Active" },
   { value: "inactive", label: "Inactive" },
 ];
+
+function buildCountQuery(filters: { stageFilter: string[]; assignedFilter: string; activeStatusFilter: string }) {
+  let q = supabase.from("call_back_deals").select("id", { count: "exact", head: true });
+  if (filters.stageFilter.length > 0) q = q.in("stage", filters.stageFilter);
+  if (filters.assignedFilter === "assigned") q = q.eq("assigned", true);
+  else if (filters.assignedFilter === "unassigned") q = q.eq("assigned", false);
+  if (filters.activeStatusFilter === "active") q = q.eq("is_active", true);
+  else if (filters.activeStatusFilter === "inactive") q = q.eq("is_active", false);
+  return q;
+}
+
+function buildDataQuery(filters: { stageFilter: string[]; assignedFilter: string; activeStatusFilter: string }, select: string) {
+  let q = supabase.from("call_back_deals").select(select);
+  if (filters.stageFilter.length > 0) q = q.in("stage", filters.stageFilter);
+  if (filters.assignedFilter === "assigned") q = q.eq("assigned", true);
+  else if (filters.assignedFilter === "unassigned") q = q.eq("assigned", false);
+  if (filters.activeStatusFilter === "active") q = q.eq("is_active", true);
+  else if (filters.activeStatusFilter === "inactive") q = q.eq("is_active", false);
+  return q;
+}
+
+function buildRunQuery(filters: { stageFilter: string[]; assignedFilter: string; activeStatusFilter: string }) {
+  let q = supabase.from("call_back_deals").select("id, phone_number, name", { count: "exact" });
+  if (filters.stageFilter.length > 0) q = q.in("stage", filters.stageFilter);
+  if (filters.assignedFilter === "assigned") q = q.eq("assigned", true);
+  else if (filters.assignedFilter === "unassigned") q = q.eq("assigned", false);
+  if (filters.activeStatusFilter === "active") q = q.eq("is_active", true);
+  else if (filters.activeStatusFilter === "inactive") q = q.eq("is_active", false);
+  return q;
+}
 
 function ts(): string {
   return new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -93,7 +99,7 @@ function logColor(status: LogEntry["status"]): string {
   }
 }
 
-export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProps) {
+export function CallBackBulkTcpaCheckModal(props: CallBackBulkTcpaCheckModalProps) {
   const { open, onOpenChange, onCompleted } = props;
   const { toast } = useToast();
   const toastRef = React.useRef(toast);
@@ -104,14 +110,10 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
   const [poolCount, setPoolCount] = React.useState<number | null>(null);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
   const [stageFilter, setStageFilter] = React.useState<string[]>([]);
-  const [carrierFilter, setCarrierFilter] = React.useState<string[]>([]);
-  const [agencyFilter, setAgencyFilter] = React.useState<string>("all");
-  const [statusFilter, setStatusFilter] = React.useState<string[]>([]);
   const [assignedFilter, setAssignedFilter] = React.useState<string>("all");
-  const [activeStatusFilter, setActiveStatusFilter] = React.useState<string>("all");
+  const [activeStatusFilter, setActiveStatusFilter] = React.useState<string>("active");
 
   const [running, setRunning] = React.useState(false);
-  const [availableCarriers, setAvailableCarriers] = React.useState<string[]>([]);
   const [progress, setProgress] = React.useState<{
     done: number;
     total: number;
@@ -123,45 +125,19 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
   const logsRef = React.useRef<LogEntry[]>([]);
   const logEndRef = React.useRef<HTMLDivElement>(null);
 
-  const filters = { stageFilter, carrierFilter, agencyFilter, statusFilter, assignedFilter, activeStatusFilter };
-
-  const buildCountQuery = () => {
-    let q = supabase.from("failed_payment_fixes").select("id", { count: "exact", head: true });
-    if (stageFilter.length > 0) q = q.in("ghl_stage", stageFilter);
-    if (carrierFilter.length > 0) q = q.in("carrier", carrierFilter);
-    if (agencyFilter !== "all") q = q.eq("assigned_agency", agencyFilter);
-    if (statusFilter.length > 0) q = q.in("policy_status", statusFilter);
-    if (assignedFilter === "assigned") q = q.eq("assigned", true);
-    else if (assignedFilter === "unassigned") q = q.eq("assigned", false);
-    if (activeStatusFilter === "active") q = q.eq("is_active", true);
-    else if (activeStatusFilter === "inactive") q = q.eq("is_active", false);
-    return q;
-  };
-
-  const buildDataQuery = () => {
-    let q = supabase.from("failed_payment_fixes").select("id, name, phone_number, policy_number, carrier, assigned_agency, ghl_stage");
-    if (stageFilter.length > 0) q = q.in("ghl_stage", stageFilter);
-    if (carrierFilter.length > 0) q = q.in("carrier", carrierFilter);
-    if (agencyFilter !== "all") q = q.eq("assigned_agency", agencyFilter);
-    if (statusFilter.length > 0) q = q.in("policy_status", statusFilter);
-    if (assignedFilter === "assigned") q = q.eq("assigned", true);
-    else if (assignedFilter === "unassigned") q = q.eq("assigned", false);
-    if (activeStatusFilter === "active") q = q.eq("is_active", true);
-    else if (activeStatusFilter === "inactive") q = q.eq("is_active", false);
-    return q;
-  };
+  const filters = { stageFilter, assignedFilter, activeStatusFilter };
 
   const loadPool = React.useCallback(async () => {
     setLoadingPool(true);
     try {
-      const { count: totalCount } = await buildCountQuery();
+      const { count: totalCount } = await buildCountQuery(filters);
       setPoolCount(totalCount ?? 0);
 
       const allRows: PoolRow[] = [];
       let offset = 0;
       const limit = 1000;
       while (true) {
-        const { data, error } = await buildDataQuery().range(offset, offset + limit - 1);
+        const { data, error } = await buildDataQuery(filters, "id, name, phone_number, submission_id").range(offset, offset + limit - 1);
         if (error) throw error;
         const batch = (data ?? []) as unknown as PoolRow[];
         allRows.push(...batch);
@@ -179,26 +155,11 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
     } finally {
       setLoadingPool(false);
     }
-  }, [stageFilter, carrierFilter, agencyFilter, statusFilter, assignedFilter, activeStatusFilter]);
+  }, [stageFilter, assignedFilter, activeStatusFilter]);
 
   React.useEffect(() => {
     if (!open) return;
     void loadPool();
-
-    const loadCarriers = async () => {
-      const { data } = await supabase
-        .from("failed_payment_fixes")
-        .select("carrier")
-        .not("carrier", "is", null);
-      const carriers = new Set<string>();
-      (data ?? []).forEach((row: { carrier: string | null }) => {
-        if (typeof row.carrier === "string" && row.carrier.trim()) {
-          carriers.add(row.carrier.trim());
-        }
-      });
-      setAvailableCarriers(Array.from(carriers).sort());
-    };
-    void loadCarriers();
   }, [open, loadPool]);
 
   React.useEffect(() => {
@@ -246,8 +207,8 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
     for (let offset = 0; offset < idsToCheck.length; offset += PAGE_SIZE) {
       const pageIds = idsToCheck.slice(offset, offset + PAGE_SIZE);
       const { data, error } = await supabase
-        .from("failed_payment_fixes")
-        .select("id, phone_number, name, policy_number")
+        .from("call_back_deals")
+        .select("id, phone_number, name")
         .in("id", pageIds);
 
       if (error) {
@@ -258,13 +219,13 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
         continue;
       }
 
-      const rows = (data ?? []) as { id: string; phone_number: string | null; name: string | null; policy_number: string }[];
+      const rows = (data ?? []) as { id: string; phone_number: string | null; name: string | null }[];
 
       for (let i = 0; i < rows.length; i += CONCURRENCY) {
         const batch = rows.slice(i, i + CONCURRENCY);
         const results = await Promise.allSettled(
           batch.map(async (row) => {
-            const displayName = row.name ?? row.policy_number ?? "-";
+            const displayName = row.name ?? "-";
             const displayPhone = row.phone_number ?? "-";
             logsRef.current.push({ time: ts(), phone: displayPhone, name: displayName, status: "checking" });
 
@@ -276,7 +237,7 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
               const tcpaResult = await checkTcpaStatus(row.phone_number);
               if (tcpaResult.status === "tcpa") {
                 await supabase
-                  .from("failed_payment_fixes")
+                  .from("call_back_deals")
                   .update({
                     is_active: false,
                     tcpa_flag: true,
@@ -289,7 +250,7 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
               }
               if (tcpaResult.status === "dnc") {
                 await supabase
-                  .from("failed_payment_fixes")
+                  .from("call_back_deals")
                   .update({
                     tcpa_flag: false,
                     tcpa_checked_at: new Date().toISOString(),
@@ -300,7 +261,7 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
                 return { status: "clear" as const };
               }
               await supabase
-                .from("failed_payment_fixes")
+                .from("call_back_deals")
                 .update({
                   tcpa_flag: false,
                   tcpa_checked_at: new Date().toISOString(),
@@ -347,7 +308,7 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="!w-[95vw] !max-w-none !h-[90vh] overflow-hidden flex flex-col p-6">
         <DialogHeader>
-          <DialogTitle>Bulk TCPA Check</DialogTitle>
+          <DialogTitle>Bulk TCPA Check — Call Back Deals</DialogTitle>
         </DialogHeader>
 
         <div className="flex-1 overflow-auto space-y-4 py-2">
@@ -364,32 +325,6 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="flex flex-col gap-1">
-              <span className="text-sm font-medium">Filter by Agency</span>
-              <Select value={agencyFilter} onValueChange={(v) => setAgencyFilter(v)}>
-                <SelectTrigger><SelectValue placeholder="All Agencies" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Agencies</SelectItem>
-                  {AGENCY_OPTIONS.map((agency) => (
-                    <SelectItem key={agency} value={agency}>{agency}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <span className="text-sm font-medium">Filter by Carrier</span>
-              <MultiSelect
-                options={availableCarriers}
-                selected={carrierFilter}
-                onChange={(selected) => setCarrierFilter(selected)}
-                placeholder="All Carriers"
-                className="w-full"
-                showAllOption={true}
-                allOptionLabel="All Carriers"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1">
               <span className="text-sm font-medium">Filter by Stage</span>
               <MultiSelect
                 options={STAGE_OPTIONS}
@@ -401,22 +336,7 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
                 allOptionLabel="All Stages"
               />
             </div>
-          </div>
 
-          <div className="flex flex-col gap-1">
-            <span className="text-sm font-medium">Filter by Status</span>
-            <MultiSelect
-              options={POLICY_STATUS_OPTIONS}
-              selected={statusFilter}
-              onChange={(selected) => setStatusFilter(selected)}
-              placeholder="All Statuses"
-              className="w-full"
-              showAllOption={true}
-              allOptionLabel="All Statuses"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
               <span className="text-sm font-medium">Filter by Assignment</span>
               <Select value={assignedFilter} onValueChange={(v) => setAssignedFilter(v)}>
@@ -476,10 +396,7 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
                     </th>
                     <th className="text-left px-3 py-2 font-medium">Name</th>
                     <th className="text-left px-3 py-2 font-medium">Phone</th>
-                    <th className="text-left px-3 py-2 font-medium">Policy #</th>
-                    <th className="text-left px-3 py-2 font-medium">Carrier</th>
-                    <th className="text-left px-3 py-2 font-medium">Agency</th>
-                    <th className="text-left px-3 py-2 font-medium">Stage</th>
+                    <th className="text-left px-3 py-2 font-medium">Submission ID</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -501,10 +418,7 @@ export function FailedPaymentFixBulkTcpaCheckModal(props: BulkTcpaCheckModalProp
                       </td>
                       <td className="px-3 py-2">{deal.name ?? "-"}</td>
                       <td className="px-3 py-2 font-mono text-xs">{deal.phone_number ?? "-"}</td>
-                      <td className="px-3 py-2 font-mono text-xs">{deal.policy_number}</td>
-                      <td className="px-3 py-2">{deal.carrier ?? "-"}</td>
-                      <td className="px-3 py-2">{deal.assigned_agency ?? "-"}</td>
-                      <td className="px-3 py-2">{deal.ghl_stage ?? "-"}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{deal.submission_id}</td>
                     </tr>
                   ))}
                 </tbody>

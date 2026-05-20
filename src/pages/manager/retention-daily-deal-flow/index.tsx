@@ -371,6 +371,16 @@ export default function RetentionDailyDealFlowPage() {
     try {
       const submissionIds = Array.from(selectedSubmissionIds);
 
+      // Get policy_numbers for the selected submission_ids from retention_deal_flow
+      const { data: rdfRows } = await supabase
+        .from("retention_deal_flow")
+        .select("submission_id, policy_number")
+        .in("submission_id", submissionIds);
+
+      const policyNumbers = (rdfRows ?? [])
+        .map((r: { policy_number: string | null }) => r.policy_number)
+        .filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+
       // Update retention_deal_flow entries by clearing retention_agent and setting status to "unassigned"
       const { error } = await supabase
         .from("retention_deal_flow")
@@ -383,11 +393,19 @@ export default function RetentionDailyDealFlowPage() {
 
       if (error) throw error;
 
-      // Also update call_back_deals to unassign them
+      // Also update call_back_deals to unassign them and mark inactive
       await supabase
         .from("call_back_deals")
         .update({ assigned: false, is_active: false })
         .in("submission_id", submissionIds);
+
+      // Also update failed_payment_fixes to unassign them and mark inactive (matched by policy_number)
+      if (policyNumbers.length > 0) {
+        await supabase
+          .from("failed_payment_fixes")
+          .update({ assigned: false, is_active: false })
+          .in("policy_number", policyNumbers);
+      }
 
       toastRef.current({
         title: "Unassign Successful",

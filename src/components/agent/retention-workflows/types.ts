@@ -34,7 +34,7 @@ export const retentionAgentOptions = ["Aqib Afridi", "Qasim Raja", "Hussain Khan
 export const carrierOptions = [
   "Liberty",
   "SBLI",
-  "Corebridge",
+  "CoreBridge",
   "MOH",
   "Transamerica",
   "RNA",

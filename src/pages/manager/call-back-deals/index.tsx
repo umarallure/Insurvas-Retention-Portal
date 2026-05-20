@@ -15,6 +15,7 @@ import { FilterIcon, Loader2, RefreshCwIcon, ShieldAlertIcon } from "lucide-reac
 import { assignCallBackDeal, unassignCallBackDeal } from "@/lib/call-back-deals/assign";
 import { CallBackBulkAssignModal } from "@/components/manager/call-back-deals/bulk-assign-modal";
 import { CallBackBulkUnassignModal } from "@/components/manager/call-back-deals/bulk-unassign-modal";
+import { CallBackBulkTcpaCheckModal } from "@/components/manager/call-back-deals/bulk-tcpa-check-modal";
 
 type CallBackDealRow = {
   id: string;
@@ -83,6 +84,7 @@ export default function ManagerCallBackDealsPage() {
 
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkUnassignOpen, setBulkUnassignOpen] = useState(false);
+  const [bulkTcpaOpen, setBulkTcpaOpen] = useState(false);
 
   const [unassignOpen, setUnassignOpen] = useState(false);
   const [unassigning, setUnassigning] = useState(false);
@@ -574,6 +576,15 @@ export default function ManagerCallBackDealsPage() {
               >
                 Bulk Unassign
               </Button>
+
+              <Button
+                variant="outline"
+                onClick={() => setBulkTcpaOpen(true)}
+                disabled={syncing || loading}
+              >
+                <ShieldAlertIcon className="mr-2 h-4 w-4" />
+                TCPA Check
+              </Button>
             </div>
 
             <div className="rounded-md border">
@@ -786,6 +797,15 @@ export default function ManagerCallBackDealsPage() {
       <CallBackBulkUnassignModal
         open={bulkUnassignOpen}
         onOpenChange={setBulkUnassignOpen}
+        onCompleted={() => {
+          void loadRows();
+          void loadStats();
+        }}
+      />
+
+      <CallBackBulkTcpaCheckModal
+        open={bulkTcpaOpen}
+        onOpenChange={setBulkTcpaOpen}
         onCompleted={() => {
           void loadRows();
           void loadStats();
