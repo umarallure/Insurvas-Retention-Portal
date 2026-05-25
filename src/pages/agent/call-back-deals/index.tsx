@@ -31,6 +31,7 @@ const STAGE_OPTIONS = [
   "Application Withdrawn",
   "Needs BPO Callback",
   "Declined Underwriting",
+  "Internal-Leads-Never-Called",
 ];
 
 export default function AgentCallBackDealsPage() {

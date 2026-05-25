@@ -10,12 +10,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { MultiSelect } from "@/components/ui/multi-select";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
-import { FilterIcon, Loader2, RefreshCwIcon, ShieldAlertIcon } from "lucide-react";
+import { FilterIcon, Loader2, RefreshCwIcon, ShieldAlertIcon, Upload } from "lucide-react";
 
 import { assignCallBackDeal, unassignCallBackDeal } from "@/lib/call-back-deals/assign";
 import { CallBackBulkAssignModal } from "@/components/manager/call-back-deals/bulk-assign-modal";
 import { CallBackBulkUnassignModal } from "@/components/manager/call-back-deals/bulk-unassign-modal";
 import { CallBackBulkTcpaCheckModal } from "@/components/manager/call-back-deals/bulk-tcpa-check-modal";
+import { UploadLeadsModal } from "@/components/manager/call-back-deals/upload-leads-modal";
 
 type CallBackDealRow = {
   id: string;
@@ -45,6 +46,7 @@ const STAGE_OPTIONS = [
   "Application Withdrawn",
   "Needs BPO Callback",
   "Declined Underwriting",
+  "Internal-Leads-Never-Called",
 ];
 
 const PAGE_SIZE = 25;
@@ -85,6 +87,7 @@ export default function ManagerCallBackDealsPage() {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkUnassignOpen, setBulkUnassignOpen] = useState(false);
   const [bulkTcpaOpen, setBulkTcpaOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   const [unassignOpen, setUnassignOpen] = useState(false);
   const [unassigning, setUnassigning] = useState(false);
@@ -585,6 +588,15 @@ export default function ManagerCallBackDealsPage() {
                 <ShieldAlertIcon className="mr-2 h-4 w-4" />
                 TCPA Check
               </Button>
+
+              <Button
+                variant="outline"
+                onClick={() => setUploadOpen(true)}
+                disabled={syncing || loading}
+              >
+                <Upload className="mr-2 h-4 w-4" />
+                Upload Leads
+              </Button>
             </div>
 
             <div className="rounded-md border">
@@ -806,6 +818,15 @@ export default function ManagerCallBackDealsPage() {
       <CallBackBulkTcpaCheckModal
         open={bulkTcpaOpen}
         onOpenChange={setBulkTcpaOpen}
+        onCompleted={() => {
+          void loadRows();
+          void loadStats();
+        }}
+      />
+
+      <UploadLeadsModal
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
         onCompleted={() => {
           void loadRows();
           void loadStats();

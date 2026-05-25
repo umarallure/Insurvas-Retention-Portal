@@ -14,6 +14,7 @@ const STAGE_OPTIONS = [
   "Application Withdrawn",
   "Needs BPO Callback",
   "Declined Underwriting",
+  "Internal-Leads-Never-Called",
 ];
 
 type CallBackDealRow = {

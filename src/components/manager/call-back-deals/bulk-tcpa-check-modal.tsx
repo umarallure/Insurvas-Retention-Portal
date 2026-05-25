@@ -39,6 +39,7 @@ const STAGE_OPTIONS = [
   "Application Withdrawn",
   "Needs BPO Callback",
   "Declined Underwriting",
+  "Internal-Leads-Never-Called",
 ];
 
 const ASSIGNED_OPTIONS = [
