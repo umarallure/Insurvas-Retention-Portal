@@ -74,19 +74,37 @@ const CRM_COLUMN_MAP: Record<string, string> = {
   last_name: "last_name",
   phone: "phone_number",
   lead_source: "lead_vendor",
-  ssn: "social_security",
-  dob: "date_of_birth",
-  bank_name: "institution_name",
+  social: "social_security",
+  date_of_birth: "date_of_birth",
+  bank_account_type: "account_type",
+  institution_name: "institution_name",
   routing_number: "beneficiary_routing",
   account_number: "beneficiary_account",
-  premium: "monthly_premium",
-  coverage: "coverage_amount",
+  monthly_premium: "monthly_premium",
+  coverage_amount: "coverage_amount",
   policy_id: "policy_number",
-  address: "street_address",
   call_center_id: "call_center_id",
   stage: "stage",
   stage_id: "stage_id",
-  agent_id: "agent",
+  carrier: "carrier",
+  product_type: "product_type",
+  driver_license_number: "driver_license",
+  existing_coverage_last_2_years: "existing_coverage",
+  previous_applications_2_years: "applied_to_life_insurance_last_two_years",
+  doctor_name: "doctors_name",
+  tobacco_use: "tobacco_use",
+  health_conditions: "health_conditions",
+  medications: "medications",
+  height: "height",
+  weight: "weight",
+  additional_information: "additional_notes",
+  beneficiary_information: "beneficiary_information",
+  email: "email",
+  birth_state: "birth_state",
+  age: "age",
+  draft_date: "draft_date",
+  future_draft_date: "future_draft_date",
+  lead_vendor: "lead_vendor",
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<LookupResponse>) {
@@ -270,19 +288,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             base.created_at = typeof crmLead.created_at === "string" ? crmLead.created_at : null;
 
             // Apply CRM→verification field name mapping so columns like
-            // ssn→social_security, phone→phone_number, dob→date_of_birth,
-            // bank_name→institution_name, routing_number→beneficiary_routing,
-            // account_number→beneficiary_account, etc. all populate correctly.
+            // social→social_security, phone→phone_number, street1→street_address,
+            // etc. all populate correctly.
             for (const [crmCol, mappedName] of Object.entries(CRM_COLUMN_MAP)) {
               if (mappedName === "first_name" || mappedName === "last_name") continue; // handled above
               const val = (crmLead as Record<string, unknown>)[crmCol];
               if (val != null && String(val).trim().length > 0) {
-                // Only set if not already set (raw spread takes lowest priority)
                 if (base[mappedName] == null || String(base[mappedName]).trim().length === 0) {
                   base[mappedName] = String(val).trim();
                 }
               }
             }
+
+            // Combine street1 + street2 → street_address
+            const street1 = typeof crmLead.street1 === "string" ? crmLead.street1.trim() : "";
+            const street2 = typeof crmLead.street2 === "string" ? crmLead.street2.trim() : "";
+            const combined = [street1, street2].filter(Boolean).join(", ");
+            if (combined) base.street_address = combined;
 
             foundLead = base as unknown as LeadRow;
             matchedBy = "ghl_name";
