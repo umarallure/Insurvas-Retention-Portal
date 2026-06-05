@@ -102,24 +102,6 @@ export function LeadHeader({
             </Button>
           )}
           <QuickDispositionButton onClick={onOpenDisposition} disabled={!selectedPolicyView && !dealId && !callBackNavigation} />
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={previousDisabled}
-            onClick={onPreviousLead}
-          >
-            Previous Lead
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={nextDisabled}
-            onClick={onNextLead}
-          >
-            Next Lead
-          </Button>
         </div>
       </div>
     </CardHeader>
