@@ -749,6 +749,15 @@ export default function AgentFailedPaymentFixDetailsPage() {
           </Button>
           <div className="text-xs text-muted-foreground">Matched by: <span className="font-medium">{matchedBy}</span></div>
           <div className="flex-1" />
+          {previousFailedPaymentFixId && (
+            <Button variant="outline" size="sm" onClick={goToPreviousFailedPaymentFix}>← Previous</Button>
+          )}
+          <div className="text-xs text-muted-foreground px-2">
+            {effectiveNavIds.length > 0 ? effectiveNavIds.indexOf(idParam) + 1 : 0} / {effectiveNavIds.length}
+          </div>
+          {nextFailedPaymentFixId && (
+            <Button variant="outline" size="sm" onClick={goToNextFailedPaymentFix}>Next →</Button>
+          )}
         </div>
 
         <Card>
