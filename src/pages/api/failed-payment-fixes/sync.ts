@@ -299,11 +299,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     console.log("[failed-payment-fixes/sync] Payloads built:", payloads.length);
 
-    if (payloads.length > 0) {
+    // Deduplicate by policy_number to avoid ON CONFLICT errors
+    const seen = new Set<string>();
+    const deduped = payloads.filter((p) => {
+      const key = String(p.policy_number ?? "");
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    console.log("[failed-payment-fixes/sync] After dedup:", deduped.length);
+
+    if (deduped.length > 0) {
       console.log("[failed-payment-fixes/sync] Starting upsert...");
       const CHUNK = 500;
-      for (let i = 0; i < payloads.length; i += CHUNK) {
-        const chunk = payloads.slice(i, i + CHUNK);
+      for (let i = 0; i < deduped.length; i += CHUNK) {
+        const chunk = deduped.slice(i, i + CHUNK);
         console.log("[failed-payment-fixes/sync] Upserting chunk:", chunk.length, "records");
         const { error: upsertErr } = await supabaseAdmin
           .from("failed_payment_fixes")

@@ -136,6 +136,7 @@ export default function AgentFailedPaymentFixDetailsPage() {
   const [verificationItems, setVerificationItems] = React.useState<Array<Record<string, unknown>>>([]);
   const [verificationInputValues, setVerificationInputValues] = React.useState<Record<string, string>>({});
   const [selectedPolicyKey, setSelectedPolicyKey] = React.useState<string | null>(null);
+  const [crmLead, setCrmLead] = React.useState<Record<string, unknown> | null>(null);
 
   const [expandedWorkflowKey, setExpandedWorkflowKey] = React.useState<string | null>(null);
   const [activeWorkflowType, setActiveWorkflowType] = React.useState<RetentionType | null>(null);
@@ -288,6 +289,12 @@ export default function AgentFailedPaymentFixDetailsPage() {
     if (!idParam) return;
     setLoading(true);
     setError(null);
+    setDeal(null);
+    setVerificationItems([]);
+    setVerificationInputValues({});
+    setSelectedPolicyKey(null);
+    setCrmLead(null);
+    setMatchedBy("none");
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -302,7 +309,15 @@ export default function AgentFailedPaymentFixDetailsPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const json = (await resp.json().catch(() => null)) as
-        | { ok: true; failedPaymentFix: FailedPaymentFixRow; matchedBy: string; verificationItems: Array<{ id: string; field_name: string; original_value: string | null; verified_value: string | null; is_verified: boolean }> }
+        | {
+            ok: true;
+            failedPaymentFix: FailedPaymentFixRow;
+            lead: Record<string, unknown> | null;
+            matchedBy: string;
+            ssn: string | null;
+            submissionId: string | null;
+            verificationItems: Array<{ id: string; field_name: string; original_value: string | null; verified_value: string | null; is_verified: boolean }>;
+          }
         | { ok: false; error: string }
         | null;
 
@@ -313,7 +328,26 @@ export default function AgentFailedPaymentFixDetailsPage() {
       }
 
       const loadedDeal = json.failedPaymentFix;
-      console.log("[fpf-details] raw ghl_stage from DB:", loadedDeal.ghl_stage);
+      const crmLeadData = json.lead;
+
+      console.log("[fpf-details] API response:", {
+        matchedBy: json.matchedBy,
+        hasLead: !!crmLeadData,
+        leadKeys: crmLeadData ? Object.keys(crmLeadData) : [],
+        verificationItemCount: json.verificationItems?.length ?? 0,
+        submissionId: json.submissionId,
+      });
+
+      if (crmLeadData) {
+        setCrmLead(crmLeadData);
+      }
+
+      // Backup: fill missing fields from CRM lead data
+      if (crmLeadData) {
+        const crmName = typeof crmLeadData.customer_full_name === "string" ? crmLeadData.customer_full_name.trim() : "";
+        if (!loadedDeal.name && crmName) loadedDeal.name = crmName;
+      }
+
       setDeal(loadedDeal);
       setMatchedBy(json.matchedBy);
       setSelectedPolicyKey(loadedDeal.id);
@@ -338,10 +372,11 @@ export default function AgentFailedPaymentFixDetailsPage() {
         }
       }
 
+      const fieldsOrder = getVerificationFieldList();
+      const orderIndex = new Map<string, number>(fieldsOrder.map((name, idx) => [name, idx]));
+
       if (json.verificationItems && json.verificationItems.length > 0) {
-        const fieldsOrder = getVerificationFieldList();
-        const orderIndex = new Map<string, number>(fieldsOrder.map((name, idx) => [name, idx]));
-        
+        console.log("[fpf-details] using real verification items", json.verificationItems.length);
         const formattedItems = [...json.verificationItems].sort((a, b) => {
           const aIdx = orderIndex.get(a.field_name) ?? Number.MAX_SAFE_INTEGER;
           const bIdx = orderIndex.get(b.field_name) ?? Number.MAX_SAFE_INTEGER;
@@ -355,7 +390,7 @@ export default function AgentFailedPaymentFixDetailsPage() {
           is_verified: item.is_verified,
         }));
         setVerificationItems(formattedItems as unknown as Array<Record<string, unknown>>);
-        
+
         const initialValues: Record<string, string> = {};
         for (const item of json.verificationItems) {
           const verified = typeof item.verified_value === "string" ? item.verified_value : "";
@@ -366,6 +401,50 @@ export default function AgentFailedPaymentFixDetailsPage() {
           }
         }
         setVerificationInputValues(initialValues);
+      } else {
+        console.log("[fpf-details] no verification items from API, checking CRM fallback. crmLeadData:", !!crmLeadData);
+        if (crmLeadData) {
+          // Fallback: build verification items from CRM lead data
+          const verifiableFields = new Set<string>(fieldsOrder as unknown as string[]);
+          const itemsFromCrm: Array<{ id: string; field_name: string; original_value: string; verified_value: string | null; is_verified: boolean }> = [];
+
+          for (const [key, val] of Object.entries(crmLeadData)) {
+            const matches = verifiableFields.has(key);
+            console.log(`[fpf-details] lead field "${key}" = "${val}" (type: ${typeof val}), matches verification: ${matches}`);
+            if (matches && val != null && String(val).trim().length > 0) {
+              itemsFromCrm.push({
+                id: `crm_${key}`,
+                field_name: key,
+                original_value: String(val).trim(),
+                verified_value: null,
+                is_verified: false,
+              });
+            }
+          }
+
+          console.log(`[fpf-details] built ${itemsFromCrm.length} synthetic verification items from CRM lead`);
+
+          if (itemsFromCrm.length > 0) {
+            itemsFromCrm.sort((a, b) => {
+              const aIdx = orderIndex.get(a.field_name) ?? Number.MAX_SAFE_INTEGER;
+              const bIdx = orderIndex.get(b.field_name) ?? Number.MAX_SAFE_INTEGER;
+              return aIdx - bIdx;
+            });
+            setVerificationItems(itemsFromCrm as unknown as Array<Record<string, unknown>>);
+
+            const initialValues: Record<string, string> = {};
+            for (const item of itemsFromCrm) {
+              if (item.original_value.length > 0) {
+                initialValues[item.id] = item.original_value;
+              }
+            }
+            setVerificationInputValues(initialValues);
+          } else {
+            console.log("[fpf-details] CRM lead has no fields matching verification field names");
+          }
+        } else {
+          console.log("[fpf-details] no CRM lead data available for fallback");
+        }
       }
     } catch (err) {
       console.error("[failed-payment-fix-details] load error", err);
@@ -787,7 +866,7 @@ export default function AgentFailedPaymentFixDetailsPage() {
                   <VerificationPanel
                     selectedPolicyView={selectedPolicyView}
                     dealPhone={phone}
-                    loading={false}
+                    loading={loading}
                     error={null}
                     verificationItems={verificationItems}
                     verificationInputValues={verificationInputValues}

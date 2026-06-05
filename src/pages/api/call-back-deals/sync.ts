@@ -210,10 +210,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       payloads.push(payload);
     }
 
-    if (payloads.length > 0) {
+    // Deduplicate by submission_id to avoid ON CONFLICT errors
+    const seen = new Set<string>();
+    const deduped = payloads.filter((p) => {
+      const key = String(p.submission_id ?? "");
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    if (deduped.length > 0) {
       const CHUNK = 500;
-      for (let i = 0; i < payloads.length; i += CHUNK) {
-        const chunk = payloads.slice(i, i + CHUNK);
+      for (let i = 0; i < deduped.length; i += CHUNK) {
+        const chunk = deduped.slice(i, i + CHUNK);
         const { error: upsertErr } = await supabaseAdmin
           .from("call_back_deals")
           .upsert(chunk, { onConflict: "submission_id", ignoreDuplicates: false });

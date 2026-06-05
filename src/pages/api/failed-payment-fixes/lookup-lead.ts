@@ -1,12 +1,18 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { getSupabaseCrmAdmin } from "@/lib/supabase-crm";
 
 type LeadRow = {
   id: string;
   submission_id: string | null;
   customer_full_name: string | null;
   social_security: string | null;
+  phone_number: string | null;
+  carrier: string | null;
+  product_type: string | null;
+  lead_vendor: string | null;
+  date_of_birth: string | null;
   created_at: string | null;
   [key: string]: unknown;
 };
@@ -61,6 +67,27 @@ function extractDigits(value: string | null | undefined): string {
   if (!value) return "";
   return value.replace(/\D/g, "");
 }
+
+// Maps CRM leads table column names to the main-DB / verification field names.
+const CRM_COLUMN_MAP: Record<string, string> = {
+  first_name: "first_name",       // combined with last_name → customer_full_name (handled separately)
+  last_name: "last_name",
+  phone: "phone_number",
+  lead_source: "lead_vendor",
+  ssn: "social_security",
+  dob: "date_of_birth",
+  bank_name: "institution_name",
+  routing_number: "beneficiary_routing",
+  account_number: "beneficiary_account",
+  premium: "monthly_premium",
+  coverage: "coverage_amount",
+  policy_id: "policy_number",
+  address: "street_address",
+  call_center_id: "call_center_id",
+  stage: "stage",
+  stage_id: "stage_id",
+  agent_id: "agent",
+};
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<LookupResponse>) {
   if (req.method !== "GET") {
@@ -143,11 +170,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       is_verified: boolean;
     }> = [];
 
+    console.log("[lookup-lead] fpf row:", { id: fpf.id, ghlName, ghlStage: fpf.ghl_stage, name: fpf.name });
+
     if (ghlName) {
       const normalizedGhlName = normalizeName(ghlName);
       const { data: leadRows, error: leadErr } = await supabaseAdmin
         .from("leads")
-        .select("id, submission_id, customer_full_name, social_security, created_at")
+        .select("*")
         .ilike("customer_full_name", `%${ghlName}%`)
         .order("created_at", { ascending: false, nullsFirst: false })
         .limit(50);
@@ -173,7 +202,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const escaped = ghlName.replace(/,/g, "");
       const { data: leadRows, error: leadErr } = await supabaseAdmin
         .from("leads")
-        .select("id, submission_id, customer_full_name, social_security, created_at")
+        .select("*")
         .ilike("customer_full_name", `%${escaped}%`)
         .order("created_at", { ascending: false, nullsFirst: false })
         .limit(50);
@@ -196,7 +225,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     if (!foundLead && ssn) {
       const { data: ssnRows, error: ssnErr } = await supabaseAdmin
         .from("leads")
-        .select("id, submission_id, customer_full_name, social_security, created_at")
+        .select("*")
         .eq("social_security", ssn)
         .order("created_at", { ascending: false, nullsFirst: false })
         .limit(50);
@@ -208,6 +237,62 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           submissionId = foundLead.submission_id;
           ssn = extractDigits(foundLead.social_security);
         }
+      }
+    }
+
+    // CRM lead lookup by policy_number (what the CRM Notes panel uses)
+    if (!foundLead) {
+      const policyNumber = typeof fpf.policy_number === "string" ? fpf.policy_number.trim() : "";
+      if (policyNumber) {
+        console.log("[lookup-lead] trying CRM leads table by policy_id:", policyNumber);
+        try {
+          const crm = getSupabaseCrmAdmin();
+          const { data: crmLead, error: crmErr } = await crm
+            .from("leads")
+            .select("*")
+            .eq("policy_id", policyNumber)
+            .maybeSingle();
+
+          if (crmErr) {
+            console.warn("[lookup-lead] CRM lookup error:", crmErr.message);
+          } else if (crmLead) {
+            console.log("[lookup-lead] found CRM lead, all keys:", Object.keys(crmLead), "values:", JSON.stringify(crmLead));
+            const firstName = typeof crmLead.first_name === "string" ? crmLead.first_name.trim() : "";
+            const lastName = typeof crmLead.last_name === "string" ? crmLead.last_name.trim() : "";
+            const fullName = [firstName, lastName].filter(Boolean).join(" ");
+
+            // Start with ALL raw CRM fields so any column that already matches
+            // a verification field name passes through automatically.
+            const base: Record<string, unknown> = { ...(crmLead as Record<string, unknown>) };
+            base.id = String(crmLead.id);
+            base.customer_full_name = fullName || null;
+            base.submission_id = typeof crmLead.submission_id === "string" ? crmLead.submission_id : null;
+            base.created_at = typeof crmLead.created_at === "string" ? crmLead.created_at : null;
+
+            // Apply CRM→verification field name mapping so columns like
+            // ssn→social_security, phone→phone_number, dob→date_of_birth,
+            // bank_name→institution_name, routing_number→beneficiary_routing,
+            // account_number→beneficiary_account, etc. all populate correctly.
+            for (const [crmCol, mappedName] of Object.entries(CRM_COLUMN_MAP)) {
+              if (mappedName === "first_name" || mappedName === "last_name") continue; // handled above
+              const val = (crmLead as Record<string, unknown>)[crmCol];
+              if (val != null && String(val).trim().length > 0) {
+                // Only set if not already set (raw spread takes lowest priority)
+                if (base[mappedName] == null || String(base[mappedName]).trim().length === 0) {
+                  base[mappedName] = String(val).trim();
+                }
+              }
+            }
+
+            foundLead = base as unknown as LeadRow;
+            matchedBy = "ghl_name";
+            submissionId = foundLead.submission_id;
+          }
+        } catch (crmErr) {
+          console.warn("[lookup-lead] CRM lookup threw:", crmErr);
+        }
+      } else {
+        console.log("[lookup-lead] fpf has no policy_number, skipping CRM lookup");
       }
     }
 
@@ -240,6 +325,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const leadData = foundLead ? { ...foundLead } : null;
+
+    console.log("[lookup-lead] returning:", {
+      matchedBy,
+      hasLead: !!leadData,
+      leadKeys: leadData ? Object.keys(leadData) : [],
+      verificationItemCount: verificationItems.length,
+      submissionId,
+    });
 
     return res.status(200).json({
       ok: true,
