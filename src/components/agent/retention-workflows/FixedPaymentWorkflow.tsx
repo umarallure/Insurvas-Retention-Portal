@@ -26,9 +26,10 @@ type FixedPaymentWorkflowProps = {
   lead: Record<string, unknown> | null;
   retentionAgent: string;
   onCancel: () => void;
+  crmLeadId?: string | null;
 };
 
-export function FixedPaymentWorkflow({ deal, leadInfo, lead, retentionAgent, onCancel }: FixedPaymentWorkflowProps) {
+export function FixedPaymentWorkflow({ deal, leadInfo, lead, retentionAgent, onCancel, crmLeadId }: FixedPaymentWorkflowProps) {
   const router = useRouter();
   const { toast } = useToast();
 
@@ -280,6 +281,58 @@ export function FixedPaymentWorkflow({ deal, leadInfo, lead, retentionAgent, onC
         });
         return;
       }
+    }
+
+    // Call CRM edge function to update lead stage, add notes, create daily_deal_flow, and send Slack
+    let edgeFunctionSucceeded = false;
+    if (crmLeadId) {
+      try {
+        const crmEdgeUrl = "https://agnefzuxoimnmfarqaxz.supabase.co/functions/v1/retention-failed-payment-fix";
+        const crmPayload = {
+          lead_id: crmLeadId,
+          retention_agent: retentionAgent,
+          notes: shortFormNotes || null,
+          status: shortFormStatus,
+          banking_info: {
+            account_holder_name: accountHolderName || null,
+            routing_number: routingNumber || null,
+            account_number: accountNumber || null,
+            account_type: accountType || null,
+            bank_name: bankName || null,
+            draft_date: draftDate || null,
+            policy_status: policyStatus || null,
+            moh_fix_type: mohFixType || null,
+          },
+        };
+        const crmRes = await fetch(crmEdgeUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(crmPayload),
+        });
+        const crmResult = await crmRes.json().catch(() => null);
+        if (!crmRes.ok || !crmResult?.ok) {
+          console.warn("[fixed-payment] CRM edge function warning:", crmResult);
+        } else {
+          console.log("[fixed-payment] CRM edge function success:", crmResult);
+          edgeFunctionSucceeded = true;
+        }
+      } catch (crmError) {
+        console.warn("[fixed-payment] CRM edge function error (non-fatal):", crmError);
+      }
+    } else {
+      console.warn("[fixed-payment] No crmLeadId available, skipping CRM edge function call");
+    }
+
+    // If edge function succeeded, skip the old retention submission flow entirely
+    if (edgeFunctionSucceeded) {
+      toast({ title: "Success", description: "Call result updated successfully" });
+      if (typeof window !== "undefined" && window.opener !== null) {
+        setTimeout(() => window.close(), 1000);
+      } else {
+        await router.push("/agent/assigned-leads");
+      }
+      setSubmittingShortForm(false);
+      return;
     }
 
     // Try multiple sources for submission_id

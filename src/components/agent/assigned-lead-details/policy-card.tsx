@@ -50,6 +50,7 @@ type PolicyCardProps = {
   onNewSaleAfterSubmit?: (quote: NewSaleQuoteDetails) => Promise<void> | void;
   callBackDealId?: string | null;
   isDq?: boolean;
+  crmLeadId?: string | null;
 };
 
 export function PolicyCard({
@@ -75,6 +76,7 @@ export function PolicyCard({
   onNewSaleAfterSubmit,
   callBackDealId,
   isDq,
+  crmLeadId,
 }: PolicyCardProps) {
   const rawStage =
     policy.raw && typeof (policy.raw as { ghl_stage?: unknown }).ghl_stage === "string"
@@ -383,7 +385,7 @@ export function PolicyCard({
                   onAfterSubmit={onNewSaleAfterSubmit}
                 />
               ) : activeWorkflowType === "fixed_payment" ? (
-                <FixedPaymentWorkflow deal={deal} leadInfo={leadInfo} lead={lead} retentionAgent={retentionAgent} onCancel={onCancelWorkflow} />
+                <FixedPaymentWorkflow deal={deal} leadInfo={leadInfo} lead={lead} retentionAgent={retentionAgent} onCancel={onCancelWorkflow} crmLeadId={crmLeadId ?? null} />
               ) : activeWorkflowType === "carrier_requirements" ? (
                 <CarrierRequirementsWorkflow
                   deal={deal}

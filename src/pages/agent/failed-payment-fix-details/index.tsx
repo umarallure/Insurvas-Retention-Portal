@@ -835,6 +835,7 @@ export default function AgentFailedPaymentFixDetailsPage() {
                                 personalAddress1="-"
                                 onCancelWorkflow={handleCancelWorkflow}
                                 isDq={isDualChargeback}
+                                crmLeadId={crmLead && typeof crmLead.id === "string" ? crmLead.id : null}
                               />
                             ))}
                           </div>
