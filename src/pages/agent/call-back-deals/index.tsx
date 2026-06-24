@@ -22,6 +22,7 @@ type CallBackDealRow = {
   call_center: string | null;
   assigned_at: string | null;
   is_active: boolean;
+  is_prioritized: boolean;
 };
 
 const PAGE_SIZE = 25;
@@ -44,6 +45,7 @@ export default function AgentCallBackDealsPage() {
   const [stageFilter, setStageFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [statusOptions, setStatusOptions] = useState<string[]>([]);
+  const [priorityFilter, setPriorityFilter] = useState(false);
   const [page, setPage] = useState(1);
 
   const [statsLoading, setStatsLoading] = useState(false);
@@ -102,7 +104,7 @@ export default function AgentCallBackDealsPage() {
       let listQuery = supabase
         .from("call_back_deals")
         .select(
-          "id, name, phone_number, submission_id, stage, call_center, assigned_at, is_active",
+          "id, name, phone_number, submission_id, stage, call_center, assigned_at, is_active, is_prioritized",
           { count: "exact" },
         )
         .eq("assigned_to_profile_id", profile.id as string)
@@ -120,6 +122,11 @@ export default function AgentCallBackDealsPage() {
       if (stageFilter !== "all") {
         listQuery = listQuery.eq("stage", stageFilter);
         navQuery = navQuery.eq("stage", stageFilter);
+      }
+
+      if (priorityFilter) {
+        listQuery = listQuery.eq("is_prioritized", true);
+        navQuery = navQuery.eq("is_prioritized", true);
       }
 
       if (statusFilteredSubmissionIds !== null) {
@@ -184,7 +191,7 @@ export default function AgentCallBackDealsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, stageFilter, search, statusFilter]);
+  }, [page, stageFilter, search, statusFilter, priorityFilter]);
 
   useEffect(() => {
     void loadDeals();
@@ -323,6 +330,18 @@ export default function AgentCallBackDealsPage() {
                   ))}
                 </SelectContent>
               </Select>
+              <label className="flex items-center gap-1.5 cursor-pointer text-sm shrink-0">
+                <input
+                  type="checkbox"
+                  checked={priorityFilter}
+                  onChange={(e) => {
+                    setPriorityFilter(e.target.checked);
+                    setPage(1);
+                  }}
+                  className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                />
+                <span className="text-muted-foreground">Prioritized</span>
+              </label>
               <Button
                 type="button"
                 onClick={() => {
@@ -380,7 +399,14 @@ export default function AgentCallBackDealsPage() {
                         <span className="font-medium">{row.name ?? "Unknown"}</span>
                       </div>
                       <div className="truncate font-mono text-xs">{row.phone_number ?? "—"}</div>
-                      <div className="truncate">{row.stage ?? "—"}</div>
+                      <div className="truncate flex items-center gap-1">
+                        {row.stage ?? "—"}
+                        {row.is_prioritized && (
+                          <span className="inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 shrink-0">
+                            Prioritized
+                          </span>
+                        )}
+                      </div>
                       <div className="truncate text-xs">{retentionData[row.submission_id]?.status ?? "—"}</div>
                       <div className="truncate text-xs text-muted-foreground max-w-[120px]" title={retentionData[row.submission_id]?.notes ?? undefined}>
                         {retentionData[row.submission_id]?.notes ? retentionData[row.submission_id].notes.slice(0, 30) + (retentionData[row.submission_id].notes.length > 30 ? "..." : "") : "—"}

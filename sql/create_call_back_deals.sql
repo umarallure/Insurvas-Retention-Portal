@@ -19,6 +19,7 @@ create table if not exists public.call_back_deals (
   tcpa_flag boolean not null default false,
   tcpa_checked_at timestamptz null,
   tcpa_message text null,
+  is_prioritized boolean not null default false,
   last_synced_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),

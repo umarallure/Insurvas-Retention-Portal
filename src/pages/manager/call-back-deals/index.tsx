@@ -28,6 +28,7 @@ type CallBackDealRow = {
   call_center: string | null;
   assigned: boolean;
   is_active: boolean;
+  is_prioritized: boolean;
   tcpa_flag: boolean;
   tcpa_message: string | null;
   assigned_to_profile_id: string | null;
@@ -67,6 +68,7 @@ export default function ManagerCallBackDealsPage() {
   const [stageFilter, setStageFilter] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive" | "assigned" | "unassigned">("all");
   const [agentFilter, setAgentFilter] = useState<string[]>([]);
+  const [priorityFilter, setPriorityFilter] = useState(false);
 
   const [agents, setAgents] = useState<ProfileRow[]>([]);
   const [assigneeNameById, setAssigneeNameById] = useState<Map<string, string>>(new Map());
@@ -102,6 +104,16 @@ export default function ManagerCallBackDealsPage() {
     fetched: number;
     upserted: number;
     skipped: number;
+  } | null>(null);
+
+  const [syncCsvFile, setSyncCsvFile] = useState<File | null>(null);
+  const [csvSyncing, setCsvSyncing] = useState(false);
+  const [csvSyncResult, setCsvSyncResult] = useState<{
+    matched: number;
+    fetched: number;
+    notFound: number;
+    total: number;
+    errors: string[];
   } | null>(null);
 
   const pageCount = useMemo(() => {
@@ -157,6 +169,7 @@ export default function ManagerCallBackDealsPage() {
         else if (statusFilter === "inactive") q = q.eq("is_active", false);
         else if (statusFilter === "assigned") q = q.eq("assigned", true);
         else if (statusFilter === "unassigned") q = q.eq("assigned", false);
+        if (priorityFilter) q = q.eq("is_prioritized", true);
         if (trimmed) {
           const escaped = trimmed.replace(/,/g, "");
           q = q.or(`name.ilike.%${escaped}%,phone_number.ilike.%${escaped}%,submission_id.ilike.%${escaped}%`);
@@ -178,6 +191,7 @@ export default function ManagerCallBackDealsPage() {
       if (stageFilter.length > 0) agentQuery = agentQuery.in("stage", stageFilter);
       if (statusFilter === "active") agentQuery = agentQuery.eq("is_active", true);
       else if (statusFilter === "inactive") agentQuery = agentQuery.eq("is_active", false);
+      if (priorityFilter) agentQuery = agentQuery.eq("is_prioritized", true);
       if (agentFilter.length > 0) agentQuery = agentQuery.in("assigned_to_profile_id", agentFilter);
       if (trimmed) {
         const escaped = trimmed.replace(/,/g, "");
@@ -239,7 +253,7 @@ export default function ManagerCallBackDealsPage() {
     } finally {
       setStatsLoading(false);
     }
-  }, [stageFilter, statusFilter, search, agentFilter]);
+  }, [stageFilter, statusFilter, search, agentFilter, priorityFilter]);
 
   const loadRows = useCallback(async () => {
     setLoading(true);
@@ -249,7 +263,7 @@ export default function ManagerCallBackDealsPage() {
       let query = supabase
         .from("call_back_deals")
         .select(
-          "id, name, phone_number, submission_id, stage, stage_id, call_center, assigned, is_active, tcpa_flag, tcpa_message, assigned_to_profile_id, assigned_at, last_synced_at",
+          "id, name, phone_number, submission_id, stage, stage_id, call_center, assigned, is_active, is_prioritized, tcpa_flag, tcpa_message, assigned_to_profile_id, assigned_at, last_synced_at",
           { count: "exact" },
         )
         .order("last_synced_at", { ascending: false, nullsFirst: false });
@@ -262,6 +276,10 @@ export default function ManagerCallBackDealsPage() {
       else if (statusFilter === "inactive") query = query.eq("is_active", false);
       else if (statusFilter === "assigned") query = query.eq("assigned", true);
       else if (statusFilter === "unassigned") query = query.eq("assigned", false);
+
+      if (priorityFilter) {
+        query = query.eq("is_prioritized", true);
+      }
 
       if (agentFilter.length > 0) {
         query = query.in("assigned_to_profile_id", agentFilter);
@@ -313,7 +331,7 @@ export default function ManagerCallBackDealsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, stageFilter, statusFilter, search, agentFilter]);
+  }, [page, stageFilter, statusFilter, search, agentFilter, priorityFilter]);
 
   useEffect(() => {
     void loadAgents();
@@ -405,6 +423,70 @@ export default function ManagerCallBackDealsPage() {
       });
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleSyncCsv = async () => {
+    if (!syncCsvFile) return;
+    setCsvSyncing(true);
+    setCsvSyncResult(null);
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) {
+      toast({ title: "Sync failed", description: "Not authenticated", variant: "destructive" });
+      setCsvSyncing(false);
+      return;
+    }
+
+    try {
+      const reader = new FileReader();
+      const base64 = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => {
+          const result = reader.result as string;
+          const base64Data = result.split(",")[1] ?? result;
+          resolve(base64Data);
+        };
+        reader.onerror = () => reject(new Error("Failed to read file"));
+        reader.readAsDataURL(syncCsvFile);
+      });
+
+      const resp = await fetch("/api/call-back-deals/sync-csv", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ file: base64, fileName: syncCsvFile.name }),
+      });
+      const json = await resp.json().catch(() => null);
+
+      if (!resp.ok || !json || !json.ok) {
+        throw new Error(json && "error" in json ? json.error : `CSV sync failed (status ${resp.status})`);
+      }
+
+      setCsvSyncResult(json);
+
+      toast({
+        title: "CSV sync complete",
+        description: `Matched ${json.matched} • Fetched ${json.fetched} • Not found ${json.notFound}`,
+      });
+
+      setSyncCsvFile(null);
+      setPage(1);
+      await loadRows();
+      await loadStats();
+    } catch (error) {
+      console.error("[manager-call-back-deals] CSV sync error", error);
+      toast({
+        title: "CSV sync failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setCsvSyncing(false);
     }
   };
 
@@ -598,6 +680,21 @@ export default function ManagerCallBackDealsPage() {
                     ))}
                   </SelectContent>
                 </Select>
+
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-1.5 cursor-pointer text-sm">
+                    <input
+                      type="checkbox"
+                      checked={priorityFilter}
+                      onChange={(e) => {
+                        setPriorityFilter(e.target.checked);
+                        setPage(1);
+                      }}
+                      className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                    />
+                    <span className="text-muted-foreground">Prioritized</span>
+                  </label>
+                </div>
               </div>
 
               <Button
@@ -695,7 +792,12 @@ export default function ManagerCallBackDealsPage() {
                           <span className="text-xs text-muted-foreground">Unassigned</span>
                         )}
                       </div>
-                      <div>
+                      <div className="flex flex-wrap gap-1">
+                        {row.is_prioritized && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                            Prioritized
+                          </span>
+                        )}
                         {row.tcpa_flag ? (
                           <span
                             className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700"
@@ -883,40 +985,115 @@ export default function ManagerCallBackDealsPage() {
         }}
       />
 
-      <Dialog open={syncModalOpen} onOpenChange={setSyncModalOpen}>
-        <DialogContent>
+      <Dialog open={syncModalOpen} onOpenChange={(open) => { if (!open) { setSyncCsvFile(null); setCsvSyncResult(null); } setSyncModalOpen(open); }}>
+        <DialogContent className="sm:max-w-[600px]">
           <DialogHeader>
             <DialogTitle>Sync Call Back Deals</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-2">
-            <p className="text-sm text-muted-foreground">
-              Choose a specific stage to sync, or sync all stages.
-            </p>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Stage (optional)</label>
-              <Select value={syncStageFilter} onValueChange={setSyncStageFilter}>
-                <SelectTrigger>
-                  <SelectValue placeholder="All stages" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All stages</SelectItem>
-                  {STAGE_OPTIONS.map((s) => (
-                    <SelectItem key={s} value={s}>{s}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          <div className="space-y-6 py-2">
+            <div className="rounded-md border p-4 space-y-4">
+              <h3 className="text-sm font-medium">Option 1: Sync by Stage</h3>
+              <p className="text-sm text-muted-foreground">
+                Pull leads from the CRM by stage.
+              </p>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Stage (optional)</label>
+                <Select value={syncStageFilter} onValueChange={setSyncStageFilter}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All stages" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All stages</SelectItem>
+                    {STAGE_OPTIONS.filter((s) => s !== "Internal-Leads-Never-Called").map((s) => (
+                      <SelectItem key={s} value={s}>{s}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => void handleSync(syncStageFilter === "all" || !syncStageFilter ? undefined : syncStageFilter)}
+              >
+                <RefreshCwIcon className="mr-2 h-4 w-4" />
+                {syncStageFilter && syncStageFilter !== "all" ? `Sync "${syncStageFilter}"` : "Sync All"}
+              </Button>
+            </div>
+
+            <div className="rounded-md border p-4 space-y-4">
+              <h3 className="text-sm font-medium">Option 2: Sync by CSV</h3>
+              <p className="text-sm text-muted-foreground">
+                Upload a CSV or Excel file with a column of submission IDs. Existing leads will be marked as prioritized, new leads will be fetched from the CRM.
+              </p>
+              <div
+                className="border-2 border-dashed rounded-md p-6 text-center cursor-pointer hover:bg-muted/20 transition-colors"
+                onClick={() => document.getElementById("csv-sync-file-input")?.click()}
+              >
+                <input
+                  id="csv-sync-file-input"
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      setSyncCsvFile(f);
+                      setCsvSyncResult(null);
+                    }
+                  }}
+                />
+                {syncCsvFile ? (
+                  <div className="flex items-center justify-center gap-2">
+                    <Upload className="h-6 w-6 text-primary" />
+                    <div className="text-left">
+                      <div className="text-sm font-medium">{syncCsvFile.name}</div>
+                      <div className="text-xs text-muted-foreground">{(syncCsvFile.size / 1024).toFixed(1)} KB</div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-2">
+                    <Upload className="h-6 w-6 text-muted-foreground" />
+                    <div className="text-sm font-medium">Click to select a file</div>
+                    <div className="text-xs text-muted-foreground">.xlsx, .xls, or .csv with submission IDs</div>
+                  </div>
+                )}
+              </div>
+
+              {csvSyncResult && (
+                <div className="rounded-md border border-green-200 bg-green-50 p-3">
+                  <div className="flex items-center gap-2 text-sm font-medium text-green-800">
+                    CSV sync complete
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
+                    <div>Total submission IDs: {csvSyncResult.total}</div>
+                    <div>Matched (existing, prioritized): {csvSyncResult.matched}</div>
+                    <div>Fetched from CRM: {csvSyncResult.fetched}</div>
+                    <div>Not found in CRM: {csvSyncResult.notFound}</div>
+                  </div>
+                  {csvSyncResult.errors.length > 0 && (
+                    <div className="mt-2 max-h-24 overflow-auto text-xs text-red-600 space-y-0.5">
+                      {csvSyncResult.errors.slice(0, 10).map((err, idx) => (
+                        <div key={idx}>{err}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => void handleSyncCsv()}
+                disabled={!syncCsvFile || csvSyncing}
+              >
+                {csvSyncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+                {csvSyncing ? "Syncing..." : "Sync CSV"}
+              </Button>
             </div>
           </div>
-          <DialogFooter className="gap-2">
+          <DialogFooter>
             <Button variant="outline" onClick={() => setSyncModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="default"
-              onClick={() => void handleSync(syncStageFilter === "all" || !syncStageFilter ? undefined : syncStageFilter)}
-            >
-              <RefreshCwIcon className="mr-2 h-4 w-4" />
-              {syncStageFilter && syncStageFilter !== "all" ? `Sync "${syncStageFilter}"` : "Sync All"}
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>
