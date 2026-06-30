@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { supabase } from "@/lib/supabase";
 import { EyeIcon, Loader2 } from "lucide-react";
 
@@ -56,6 +57,8 @@ export default function AgentFailedPaymentFixesPage() {
   const [retentionStatusFilter, setRetentionStatusFilter] = useState<string>("all");
   const [retentionData, setRetentionData] = useState<Record<string, RetentionDealFlowInfo>>({});
   const [retentionStatusOptions, setRetentionStatusOptions] = useState<string[]>([]);
+  const [carrierStatusFilter, setCarrierStatusFilter] = useState<string[]>([]);
+  const [carrierStatusOptions, setCarrierStatusOptions] = useState<string[]>([]);
   const [page, setPage] = useState(1);
 
   const [statsLoading, setStatsLoading] = useState(false);
@@ -125,6 +128,10 @@ export default function AgentFailedPaymentFixesPage() {
         listQuery = listQuery.eq("policy_status", statusFilter);
       }
 
+      if (carrierStatusFilter.length > 0) {
+        listQuery = listQuery.in("carrier_status", carrierStatusFilter);
+      }
+
       if (statusFilteredPolicyIds !== null) {
         listQuery = listQuery.in("policy_number", statusFilteredPolicyIds);
       }
@@ -141,6 +148,16 @@ export default function AgentFailedPaymentFixesPage() {
 
       let deals = (data ?? []) as FailedPaymentFixRow[];
       setTotalRows(count ?? null);
+
+      if (carrierStatusOptions.length === 0) {
+        const { data: carrierRows } = await supabase
+          .from("failed_payment_fixes")
+          .select("carrier_status")
+          .eq("is_active", true)
+          .not("carrier_status", "is", null);
+        const unique = Array.from(new Set((carrierRows ?? []).map((r) => r.carrier_status as string).filter(Boolean))).sort();
+        setCarrierStatusOptions(unique);
+      }
 
       const policyNumbers = deals.map((d) => d.policy_number).filter(Boolean);
       if (policyNumbers.length > 0) {
@@ -175,7 +192,7 @@ export default function AgentFailedPaymentFixesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, statusFilter, search, retentionStatusFilter]);
+  }, [page, statusFilter, carrierStatusFilter, search, retentionStatusFilter]);
 
   useEffect(() => {
     void loadDeals();
@@ -294,6 +311,18 @@ export default function AgentFailedPaymentFixesPage() {
                   ))}
                 </SelectContent>
               </Select>
+              <MultiSelect
+                options={carrierStatusOptions}
+                selected={carrierStatusFilter}
+                onChange={(selected) => {
+                  setCarrierStatusFilter(selected);
+                  setPage(1);
+                }}
+                placeholder="Carrier Status"
+                className="w-full sm:w-[200px]"
+                showAllOption
+                allOptionLabel="All Carrier Statuses"
+              />
               <Select
                 value={retentionStatusFilter}
                 onValueChange={(v) => {
