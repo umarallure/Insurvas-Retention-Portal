@@ -61,6 +61,7 @@ export default function AgentFailedPaymentFixesPage() {
   const [carrierStatusOptions, setCarrierStatusOptions] = useState<string[]>([]);
   const [carrierFilter, setCarrierFilter] = useState<string[]>([]);
   const [carrierOptions, setCarrierOptions] = useState<string[]>([]);
+  const [activeOnly, setActiveOnly] = useState(true);
   const [page, setPage] = useState(1);
 
   const [statsLoading, setStatsLoading] = useState(false);
@@ -123,8 +124,11 @@ export default function AgentFailedPaymentFixesPage() {
           { count: "exact" },
         )
         .eq("assigned_to_profile_id", profile.id as string)
-        .eq("is_active", true)
         .order("assigned_at", { ascending: false, nullsFirst: false });
+
+      if (activeOnly) {
+        listQuery = listQuery.eq("is_active", true);
+      }
 
       if (statusFilter !== "all") {
         listQuery = listQuery.eq("policy_status", statusFilter);
@@ -215,7 +219,7 @@ export default function AgentFailedPaymentFixesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, statusFilter, carrierStatusFilter, carrierFilter, search, retentionStatusFilter]);
+  }, [page, statusFilter, carrierStatusFilter, carrierFilter, search, retentionStatusFilter, activeOnly]);
 
   useEffect(() => {
     void loadDeals();
@@ -246,17 +250,19 @@ export default function AgentFailedPaymentFixesPage() {
         return;
       }
 
-      const { count: totalCount } = await supabase
+      let statsQuery = supabase
         .from("failed_payment_fixes")
         .select("*", { count: "exact", head: true })
-        .eq("assigned_to_profile_id", profile.id)
-        .eq("is_active", true);
+        .eq("assigned_to_profile_id", profile.id);
+      if (activeOnly) statsQuery = statsQuery.eq("is_active", true);
+      const { count: totalCount } = await statsQuery;
 
-      const { data: statusData } = await supabase
+      let statusDataQuery = supabase
         .from("failed_payment_fixes")
         .select("policy_status")
-        .eq("assigned_to_profile_id", profile.id)
-        .eq("is_active", true);
+        .eq("assigned_to_profile_id", profile.id);
+      if (activeOnly) statusDataQuery = statusDataQuery.eq("is_active", true);
+      const { data: statusData } = await statusDataQuery;
 
       const byStatus: Record<string, number> = {};
       (statusData ?? []).forEach((row: { policy_status: string | null }) => {
@@ -271,7 +277,7 @@ export default function AgentFailedPaymentFixesPage() {
     } finally {
       setStatsLoading(false);
     }
-  }, []);
+  }, [activeOnly]);
 
   useEffect(() => {
     void loadStats();
@@ -377,6 +383,18 @@ export default function AgentFailedPaymentFixesPage() {
                   ))}
                 </SelectContent>
               </Select>
+              <label className="flex items-center gap-1.5 cursor-pointer text-sm shrink-0">
+                <input
+                  type="checkbox"
+                  checked={activeOnly}
+                  onChange={(e) => {
+                    setActiveOnly(e.target.checked);
+                    setPage(1);
+                  }}
+                  className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                />
+                <span className="text-muted-foreground">Active only</span>
+              </label>
               <Button
                 type="button"
                 onClick={() => {
